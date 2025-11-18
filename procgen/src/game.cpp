@@ -70,6 +70,29 @@ void Game::parse_options(std::string name, VecOptions opts) {
     opts.consume_int("physics_mode", &options.physics_mode);
     opts.consume_int("debug_mode", &options.debug_mode);
     opts.consume_int("game_type", &game_type);
+    
+    // FruitBot custom rewards
+    if (name == "fruitbot") {
+        // Read as integers (multiplied by 100) to avoid float parsing issues
+        int reward_completion_int = -1;
+        int reward_positive_int = -1;
+        int reward_negative_int = -1;
+        int reward_wall_hit_int = -1;
+        int reward_time_penalty_int = -1;
+        int reward_step_int = -1;
+        
+        opts.consume_int("fruitbot_reward_completion_x100", &reward_completion_int);
+        opts.consume_int("fruitbot_reward_positive_x100", &reward_positive_int);
+        opts.consume_int("fruitbot_reward_negative_x100", &reward_negative_int);
+        opts.consume_int("fruitbot_reward_wall_hit_x100", &reward_wall_hit_int);
+        opts.consume_int("fruitbot_reward_step_x100", &reward_step_int);
+        
+        if (reward_completion_int >= 0) options.fruitbot_reward_completion = reward_completion_int / 100.0f;
+        if (reward_positive_int >= 0) options.fruitbot_reward_positive = reward_positive_int / 100.0f;
+        if (reward_negative_int >= 0) options.fruitbot_reward_negative = reward_negative_int / 100.0f;
+        if (reward_wall_hit_int >= 0) options.fruitbot_reward_wall_hit = reward_wall_hit_int / 100.0f;
+        if (reward_step_int >= 0) options.fruitbot_reward_step = reward_step_int / 100.0f;
+    }
 
     opts.ensure_empty();
 }

@@ -2,9 +2,10 @@
 import argparse
 
 from procgen import ProcgenGym3Env
-from .env import ENV_NAMES
+# from .env import ENV_NAMES
 from gym3 import Interactive, VideoRecorderWrapper, unwrap
 
+ENV_NAMES = ['bigfish', 'bossfight', 'caveflyer', 'chaser', 'climber', 'coinrun', 'dodgeball', 'fruitbot', 'heist', 'jumper', 'leaper', 'maze', 'miner', 'ninja', 'plunder', 'starpilot', 'treasurehunt']
 
 class ProcgenInteractive(Interactive):
     def __init__(self, *args, **kwargs):
@@ -23,6 +24,7 @@ class ProcgenInteractive(Interactive):
 
 
 def make_interactive(vision, record_dir, **kwargs):
+    print("============================= making interactive env =============================")
     info_key = None
     ob_key = None
     if vision == "human":
@@ -32,6 +34,11 @@ def make_interactive(vision, record_dir, **kwargs):
         ob_key = "rgb"
 
     env = ProcgenGym3Env(num=1, **kwargs)
+    # import wrappers
+    # print("Using Procgen wrappers")
+    # if kwargs.get("env_name", "") == "fruitbot":
+    #     print("Using Fruitbot basic wrapper")
+    #     env = wrappers.make_fruitbot_basic(env)
     if record_dir is not None:
         env = VideoRecorderWrapper(
             env=env, directory=record_dir, ob_key=ob_key, info_key=info_key
@@ -65,7 +72,7 @@ def main():
     )
     parser.add_argument(
         "--env-name",
-        default="coinrun",
+        default="fruitbot",
         help="name of game to create " + default_str,
         choices=ENV_NAMES + ["coinrun_old"],
     )

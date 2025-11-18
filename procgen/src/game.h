@@ -57,6 +57,13 @@ struct GameOptions {
     bool use_easy_jump = false;
     int plain_assets = 0;
     int physics_mode = 0;
+    
+    // FruitBot custom rewards
+    float fruitbot_reward_completion = 10.0f;
+    float fruitbot_reward_positive = 1.0f;
+    float fruitbot_reward_negative = -2.0f;
+    float fruitbot_reward_wall_hit = 0.0f;
+    float fruitbot_reward_step = 0.0f;
 };
 
 class Game {

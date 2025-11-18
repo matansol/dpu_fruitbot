@@ -49,6 +49,75 @@ def check(proc, verbose):
         print(f"RUN {proc.args}:\n{proc.stdout}")
 
 
+def _windows_detect_generator():
+    """
+    Best-effort detection of an appropriate Visual Studio CMake generator on Windows.
+    Precedence:
+    1) Respect PROCGEN_CMAKE_GENERATOR/PROCGEN_CMAKE_ARCH if provided
+    2) Use vswhere (if available) to pick VS 2022 or VS 2019
+    3) Parse `cmake --help` to see supported VS generators
+    4) Fallback to VS 2019
+    Returns (generator, arch)
+    """
+    # 1) Environment overrides
+    gen_env = os.environ.get("PROCGEN_CMAKE_GENERATOR")
+    arch_env = os.environ.get("PROCGEN_CMAKE_ARCH", "x64")
+    if gen_env:
+        return gen_env, arch_env
+
+    # 2) Try vswhere to detect installed VS
+    try:
+        vswhere_path = os.path.join(
+            os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"),
+            "Microsoft Visual Studio",
+            "Installer",
+            "vswhere.exe",
+        )
+        if os.path.exists(vswhere_path):
+            # Query for latest VS with C++ tools; get installationVersion
+            proc = sp.run(
+                [
+                    vswhere_path,
+                    "-latest",
+                    "-products",
+                    "*",
+                    "-requires",
+                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property",
+                    "installationVersion",
+                    "-format",
+                    "value",
+                ],
+                stdout=sp.PIPE,
+                stderr=sp.STDOUT,
+                encoding="utf8",
+            )
+            if proc.returncode == 0:
+                ver = (proc.stdout or "").strip()
+                # installationVersion like 17.10.2... => VS 2022
+                if ver.startswith("17."):
+                    return "Visual Studio 17 2022", "x64"
+                if ver.startswith("16."):
+                    return "Visual Studio 16 2019", "x64"
+    except Exception:
+        pass
+
+    # 3) Parse cmake --help for supported generators
+    try:
+        proc = sp.run(["cmake", "--help"], stdout=sp.PIPE, stderr=sp.STDOUT, encoding="utf8")
+        if proc.returncode == 0:
+            help_text = proc.stdout or ""
+            if "Visual Studio 17 2022" in help_text:
+                return "Visual Studio 17 2022", "x64"
+            if "Visual Studio 16 2019" in help_text:
+                return "Visual Studio 16 2019", "x64"
+    except Exception:
+        pass
+
+    # 4) Fallback
+    return "Visual Studio 16 2019", "x64"
+
+
 def _attempt_configure(build_type, package):
     if "PROCGEN_CMAKE_PREFIX_PATH" in os.environ:
         cmake_prefix_paths = [os.environ["PROCGEN_CMAKE_PREFIX_PATH"]]
@@ -72,8 +141,9 @@ def _attempt_configure(build_type, package):
     generator = "Unix Makefiles"
     extra_configure_options = []
     if platform.system() == "Windows":
-        generator = "Visual Studio 16 2019"
-        extra_configure_options.extend(["-A", "x64"])
+        # Auto-detect a suitable Visual Studio generator (or respect env overrides)
+        generator, arch = _windows_detect_generator()
+        extra_configure_options.extend(["-A", arch])
     configure_cmd = [
         "cmake",
         "-G",

@@ -7,7 +7,7 @@ const std::string NAME = "fruitbot";
 
 const float COMPLETION_BONUS = 10.0;
 const int POSITIVE_REWARD = 1.0f;
-const int PENALTY = -4.0f;
+const int PENALTY = -2.0f; // -4.0f
 
 const int BARRIER = 1;
 const int OUT_OF_BOUNDS_WALL = 2;
@@ -97,19 +97,21 @@ class FruitBotGame : public BasicAbstractGame {
         BasicAbstractGame::handle_agent_collision(obj);
 
         if (obj->type == BARRIER) {
+            step_data.reward += options.fruitbot_reward_wall_hit;
             step_data.done = true;
         } else if (obj->type == BAD_OBJ) {
-            step_data.reward += PENALTY;
+            step_data.reward += options.fruitbot_reward_negative;
             obj->will_erase = true;
         } else if (obj->type == LOCKED_DOOR) {
+            step_data.reward += options.fruitbot_reward_wall_hit;
             step_data.done = true;
         } else if (obj->type == GOOD_OBJ) {
-            step_data.reward += POSITIVE_REWARD;
+            step_data.reward += options.fruitbot_reward_positive;
             obj->will_erase = true;
         } else if (obj->type == PRESENT) {
             if (!step_data.done) {
             }
-            step_data.reward += COMPLETION_BONUS;
+            step_data.reward += options.fruitbot_reward_completion;
             step_data.done = true;
             step_data.level_complete = true;
         }
@@ -207,7 +209,7 @@ class FruitBotGame : public BasicAbstractGame {
         float min_pct = .1;
 
         if (options.distribution_mode == EasyMode) {
-            num_walls = 5;
+            // num_walls = 5;
             object_group_size = 2;
             door_prob = 0;
             min_pct = .2;
@@ -251,6 +253,11 @@ class FruitBotGame : public BasicAbstractGame {
 
     void game_step() override {
         BasicAbstractGame::game_step();
+        
+        // Small reward for each step survived (encourages forward progress)
+        if (options.fruitbot_reward_step != 0.0f) {
+            step_data.reward += options.fruitbot_reward_step;
+        }
 
         if (special_action == 1 && (cur_time - last_fire_time) >= KEY_DURATION) {
             float vx = 0;

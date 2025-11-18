@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\matan\master_thesis\rl_envs\procgen\procgen\.build\relwithdebinfo\CMakeFiles\0f53722f7a5a7d97d292f2ac0eee70d3\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{FC0996D4-F4C5-3CDD-BB3A-5461D9CDA6E7}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

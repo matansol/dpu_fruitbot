@@ -215,6 +215,12 @@ class ProcgenGym3Env(BaseProcgenEnv):
         use_generated_assets=False,
         paint_vel_info=False,
         distribution_mode="hard",
+        # FruitBot custom rewards
+        fruitbot_reward_completion=10.0,
+        fruitbot_reward_positive=1.0,
+        fruitbot_reward_negative=-1.0,
+        fruitbot_reward_wall_hit=-2.0,
+        fruitbot_reward_step=0.0,
         **kwargs,
     ):
         assert (
@@ -243,6 +249,15 @@ class ProcgenGym3Env(BaseProcgenEnv):
                 "paint_vel_info": bool(paint_vel_info),
                 "distribution_mode": distribution_mode,
             }
+        
+        # Add FruitBot custom rewards (multiply by 100 for int transmission)
+        if env_name == "fruitbot":
+            options["fruitbot_reward_completion_x100"] = int(fruitbot_reward_completion * 100)
+            options["fruitbot_reward_positive_x100"] = int(fruitbot_reward_positive * 100)
+            options["fruitbot_reward_negative_x100"] = int(fruitbot_reward_negative * 100)
+            options["fruitbot_reward_wall_hit_x100"] = int(fruitbot_reward_wall_hit * 100)
+            options["fruitbot_reward_step_x100"] = int(fruitbot_reward_step * 100)
+        
         super().__init__(num, env_name, options, **kwargs)
         
         

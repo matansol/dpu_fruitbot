@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minigrid Game</title>
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .page {
+            display: none; /* Hide all pages initially */
+            flex-direction: column;
+            justify-content: flex-start;   /* Align to top */
+            align-items: center;           /* Center horizontally */
+            position: relative;
+            background: #eaf6fb;
+            min-height: 100vh;
+            width: 100vw;
+            padding-top: 24px;
+            box-sizing: border-box;
+        }
+        .active {
+            display: flex; /* Show active page */
+        }
+        #welcome-page {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            padding: 0 15vw 0 25vw;
+            background: #eaf6fb;
+        }
+        #welcome-page-content {
+            max-width: 800px; /* Set a max-width for the content */
+            margin: 0 auto;
+        }
+        #game-container {
+            display: flex; /* Initially set to flex */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #button-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 10px; /* Add space between buttons and the game */
+        }
+        #button-container button {
+            margin: 0 10px; /* Add space between the buttons */
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            background-color: #f8f8f8;
+        }
+        #game-content {
+            display: flex; /* Keep items side-by-side */
+            justify-content: center;
+            align-items: flex-start;
+            position: relative; /* Set relative position for absolute positioning inside */
+            width: 100%;
+        }
+        
+        #game-image-container {
+            width: 60vw;
+            height: 40vw;
+            max-width: 640px;
+            max-height: 480px;
+            border: 1px solid black;
+        }
+        #game-image-ph1, #game-image-ph2 {
+            width: 100%;
+            height: 100%;
+        }
+        /* #key-instructions {
+            margin-left: 20px;
+            text-align: left;
+            padding: 10px;
+            border: 1px solid black;
+        } */
+        #info-container {
+            text-align: center;
+            margin-top: 20px;
+        }
+        #overview-image-container {
+            width: 60vw;
+            height: 40vw;
+            max-width: 640px;
+            max-height: 480px;
+            border: 1px solid black;
+        }
+        #overview-game-image {
+            width: 100%;
+            height: 100%;
+        }
+        #actions {
+            list-style-type: none; /* Remove default bullet points */
+            padding: 0;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        #loading-indicator {
+            display: none; /* Initially hidden */
+            font-size: 18px;
+            color: #555;
+        }
+        .highlight {
+            position: absolute;
+            background-color: rgba(255, 255, 0, 0.5); /* Half-transparent yellow */
+            border: 1px solid yellow;
+            pointer-events: none;
+            display: block; 
+            z-index: 9999; /* Make sure it's on top of everything */
+        }
+
+        .dropdown {
+            position: absolute;
+            background-color: white;
+            border: 1px solid #ccc;
+            z-index: 1000;
+            width: 200px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .dropdown ul {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .dropdown ul li {
+            padding: 8px;
+            cursor: pointer;
+        }
+
+        .dropdown ul li:hover {
+            background-color: #f0f0f0;
+        }
+
+        .selected-action {
+            background-color: lightblue !important;
+            color: #222 !important;
+            border-radius: 5px;
+            padding: 2px 8px;
+        }
+
+        #current-action::before {
+            content: "\25BC"; /* ▼ */
+            margin-right: 10px;
+            color: #4e4747;
+        }
+
+        #compare-container {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+        }
+        #compare-container div {
+            text-align: center;
+        }
+        #compare-container img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000; /* Ensure it appears above other elements */
+        }
+
+        .loading-icon {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3; /* Light gray */
+            border-top: 5px solid #3498db; /* Blue */
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        #loading-overlay p {
+            color: white;
+            font-size: 18px;
+            margin-top: 10px;
+        }
+
+        /* Loader Overlay (hidden by default) */
+#loader-overlay {
+  display:none;
+  position:fixed;
+  top:0;
+  left:0;
+  width:100vw;
+  height:100vh;
+  background:rgba(255,255,255,0.85);
+  z-index:2000;
+  justify-content:center;
+  align-items:center;
+  flex-direction:column;
+}
+
+.loader {
+  border: 16px solid #f3f3f3;
+  border-top: 16px solid #3498db;
+  border-radius: 50%;
+  width: 120px;
+  height: 120px;
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg);}
+  100% { transform: rotate(360deg);}
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+    #game-content, #compare-container {
+        flex-direction: column !important;
+        align-items: center !important;
+    }
+    #game-image-container, #overview-image-container {
+        width: 90vw !important;
+        height: 50vw !important;
+        max-width: 400px !important;
+        max-height: 300px !important;
+    }
+    #overview-game-image, #game-image-ph1, #game-image-ph2 {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    /* #key-instructions {
+        margin-left: 0 !important;
+        margin-top: 20px !important;
+        width: 90vw !important;
+        max-width: 400px !important;
+    } */
+}
+
+@media (max-width: 600px) {
+    body, html {
+        font-size: 14px;
+    }
+    #game-image-container, #overview-image-container {
+        width: 98vw !important;
+        height: 55vw !important;
+        max-width: 320px !important;
+        max-height: 200px !important;
+    }
+    /* #key-instructions {
+        font-size: 13px;
+    } */
+}
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <!-- Cover Page -->
+    <div id="cover-page" class="page active">
+        <h1>Welcome to the Minigrid Game</h1>
+        <button id="cover-start-button">Start</button>
+    </div>
+
+    <!-- Welcome Page -->
+    <div id="welcome-page" class="page" style="display: none;">
+        <div style="display: flex; flex-direction: column; align-items: flex-start; width: 100%;">
+            <h2 style="font-size: 2.5em; margin-bottom: 0; margin-right: 10px; white-space: nowrap; display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-robot" style="color: #3498db;"></i>
+                Train the Agent
+            </h2>
+            <span style="font-size: 1.2em; line-height: 1.4; text-align: left; white-space: pre-line; margin-top: 10px;">
+                In this part, a pre-trained AI agent will be controlling the avatar in the game.<br>
+                This agent is not perfect — it sometimes makes mistakes or chooses suboptimal actions.<br>
+                Your mission is to help train this agent to become the best it can. The better the agent you can get to, the more prize you will get.<br>
+            </span>
+        </div>
+        <!-- <input type="text" id="player-ID" placeholder="Enter your Prolific ID"> -->
+        <button id="welcome-continue-button">Continue</button>
+    </div>
+
+    <!-- Phase2 - Agent Play Page -->
+    <div id="ph2-game-page" class="page">
+        <div id="round-header" style="width: 100%; text-align: center; margin-bottom: 10px;">
+            <span style="font-size: 1.3em; font-weight: bold;">Round <span id="round-number">1</span></span>
+        </div>
+        <p style="font-size: 1.2em;">
+            Watch the AI agent control the avatar and see where it makes mistakes. <br> 
+            When the round is over, you’ll have a chance to give feedback.</p>
+        <!-- Start Agent Button -->
+        <div id="button-container-ph2" style="margin-top: 5px; text-align: center;">
+            <button id="start-agent-button" style="display: block;">Start Agent</button>
+        </div>
+        <div id="game-container">
+            <div id="game-content" style="display: flex; flex-direction: row; align-items: flex-start; width: 100%;">
+                <div id="game-image-container" style="position: relative;">
+                    <div id="step-count-overlay-ph2" style="
+                        position: absolute;
+                        top: 10px;
+                        right: 10px;
+                        color: white;
+                        background-color: rgba(0, 0, 0, 0.5);
+                        padding: 5px 10px;
+                        border-radius: 5px;
+                        font-size: 16px;
+                        z-index: 10;">
+                        Step Count: <span id="step-count-ph2">0</span>
+                    </div>
+                    <i id="ph2-placeholder-spinner" class="fas fa-spinner fa-spin placeholder-icon" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:48px;color:#3498db;z-index:2;"></i>
+                    <img id="game-image-ph2" src="" alt="Game Image">
+                </div>
+                <div id="right-panel" style="display: flex; flex-direction: column; align-items: flex-start; margin-left: 30px; min-width: 200px; max-width: 240px;">
+                    <!-- MAP LEGEND FOR PH2 PAGE -->
+                    <div id="map-legend" style="border: 1px solid #aaa; border-radius: 8px; padding: 16px; background: #f9f9f9; min-width: 160px; max-width: 200px; display: flex; flex-direction: column; align-items: flex-start;">
+                        <h4 style="margin-top:0;">Scores</h4>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#3498db;border-radius:50%;margin-right:10px;border:2px solid #222;"></span> Blue Ball = <b style="margin-left:5px;">4</b></div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#27ae60;border-radius:50%;margin-right:10px;border:2px solid #222;"></span> Green Ball = <b style="margin-left:5px;">2</b></div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#e74c3c;border-radius:50%;margin-right:10px;border:2px solid #222;"></span> Red Ball = <b style="margin-left:5px;">-1</b></div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#27ae60;margin-right:10px;border:2px solid #222;"></span> Goal = <b style="margin-left:5px;">5</b></div>
+                        <div style="display: flex; align-items: center; margin-bottom: 0;"><span style="display:inline-block;width:22px;height:22px;margin-right:10px;border:2px solid #222;"><img src="static/images/lava_cell.png" alt="Lava" style="width:100%;height:100%;object-fit:cover;border-radius:5px;"></span>Lava = -3</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- Agent Choice Page -->
+<div id="agent-choice-page" class="page" style="display: none; background: #eaf6fb;">
+    <div style="text-align: center; padding: 40px;">
+        <h2>Round Complete!</h2>        
+        <!-- Game Image Container -->
+        <div style="display: flex; justify-content: center; margin: 30px 0;">
+            <div style="width: 60vw; height: 40vw; max-width: 640px; max-height: 480px; border: 1px solid #aaa; background: #eaf6fb;">
+                <img id="agent-choice-game-image" src="" alt="Game Image" style="width: 100%; height: 100%; background: #eaf6fb;">
+            </div>
+        </div>
+        <p style="font-size: 1.2em; margin: 20px 0;">Would you like to update the agent’s strategy or continue with the current one?</p>
+
+        <div style="display: flex; justify-content: center; gap: 30px; margin-top: 40px;">
+            <button id="no-change-choice-button" style="
+                font-size: 18px; 
+                padding: 15px 30px; 
+                background-color: #0e9747; 
+                color: white; 
+                border: none; 
+                border-radius: 8px; 
+                cursor: pointer;
+                transition: background-color 0.3s;">
+                Do Not Change
+            </button>
+
+            <button id="update-agent-choice-button" style="
+                font-size: 18px; 
+                padding: 15px 30px; 
+                background-color: #0a6bac; 
+                color: white; 
+                border: none; 
+                border-radius: 8px; 
+                cursor: pointer;
+                transition: background-color 0.3s;">
+                Update Strategy
+            </button>
+        </div>
+    </div>
+</div>
+
+Overview Page
+<div id="overview-page" class="page" style="display: none; background: #eaf6fb;">
+    <h2>Round <span id="overview-round-number">1</span> Overview</h2>
+    <p style="font-size: 1.2em;">Use the Previous / Next buttons to navigate between actions. <br>
+                Provide feedback by selecting a new action from the dropdown. <br>
+                If you make more than one correction to the same action, only the last one counts.</p>
+  
+    <div style="display: flex; flex-direction: row; align-items: flex-start; width: 100%; justify-content: center; background: #eaf6fb; padding-bottom: 30px;">
+      <div id="left-panel" style="display: flex; flex-direction: column; align-items: flex-start; position: relative;">
+        <!-- Action controls above the image -->
+        <div id="action-controls" style="display: flex; align-items: center; margin-bottom: 10px;">
+          <span>Current Action:</span>
+          <h3 id="current-action" style="margin: 0 10px; cursor: pointer;">ActionName</h3>
+          <button id="prev-action-button" style="margin-left: 20px;">Previous Action</button>
+          <button id="next-action-button" style="margin-left: 10px;">Next Action</button>
+        </div>
+      
+        <!-- Image container (positioned) -->
+        <div id="game-image-container" style="width: 60vw; height: 40vw; max-width: 640px; max-height: 480px; border: 1px solid #eaf6fb; background: #eaf6fb;">
+          <img id="overview-game-image" src="" alt="Game Image" style="width: 100%; height: 100%; background: #eaf6fb;">
+        </div>
+      </div>
+      <div id="right-panel" style="display: flex; flex-direction: column; align-items: flex-start; margin-left: 30px; min-width: 200px; max-width: 240px;">
+        <!-- MAP LEGEND FOR PH2 PAGE -->
+        <div id="map-legend" style="border: 1px solid #aaa; border-radius: 8px; padding: 16px; background: #f9f9f9; min-width: 160px; max-width: 200px; display: flex; flex-direction: column; align-items: flex-start;">
+            <h4 style="margin-top:0;">Scores</h4>
+            <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#3498db;border-radius:50%;margin-right:10px;border:2px solid #222;"></span> Blue Ball = <b style="margin-left:5px;">4</b></div>
+            <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#27ae60;border-radius:50%;margin-right:10px;border:2px solid #222;"></span> Green Ball = <b style="margin-left:5px;">2</b></div>
+            <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#e74c3c;border-radius:50%;margin-right:10px;border:2px solid #222;"></span> Red Ball = <b style="margin-left:5px;">-1</b></div>
+            <div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="display:inline-block;width:22px;height:22px;background:#27ae60;margin-right:10px;border:2px solid #222;"></span> Goal = <b style="margin-left:5px;">5</b></div>
+            <div style="display: flex; align-items: center; margin-bottom: 0;"><span style="display:inline-block;width:22px;height:22px;margin-right:10px;border:2px solid #222;"><img src="static/images/lava_cell.png" alt="Lava" style="width:100%;height:100%;object-fit:cover;border-radius:5px;"></span>Lava = -3</div>
+        </div>
+        <!-- Symbol Legend for Overview Page (below map-legend) -->
+        <div id="overview-symbol-legend" style="margin-top: 18px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; border: 1px solid #aaa; border-radius: 8px; background: #f9f9f9; padding: 16px 18px; min-width: 160px; max-width: 220px;">
+            <span style="display: flex; align-items: center; gap: 6px;">
+                <!-- Blue Turn Arrow SVG: thinner line, bigger head -->
+                <svg width="32" height="18" viewBox="0 0 32 18" style="vertical-align: middle;"><path d="M4 9 H22" stroke="#3498db" stroke-width="2.2" fill="none"/><polygon points="22,9 15,4 15,14" fill="#3498db"/></svg>
+                <span style="font-size: 1em;">Turn</span>
+            </span>
+            <span style="display: flex; align-items: center; gap: 6px;">
+                <!-- Yellow Forward Arrow SVG: thinner line, bigger head -->
+                <svg width="32" height="18" viewBox="0 0 32 18" style="vertical-align: middle;"><line x1="4" y1="9" x2="26" y2="9" stroke="#FFD600" stroke-width="2.2"/><polygon points="26,9 19,4 19,14" fill="#FFD600"/></svg>
+                <span style="font-size: 1em;">Move Forward</span>
+            </span>
+            <span style="display: flex; align-items: center; gap: 6px;">
+                <!-- Pink Star SVG -->
+                <svg width="22" height="22" viewBox="0 0 22 22" style="vertical-align: middle;"><polygon points="11,2 13,8 19,8 14,12 16,18 11,14 6,18 8,12 3,8 9,8" fill="#e6007a"/></svg>
+                <span style="font-size: 1em;">Pickup</span>
+            </span>
+        </div>
+        <!-- Info container moved here -->
+        <div id="info-container" style="margin-top: 20px; width: 100%;">
+            <!-- <p>Action: <span id="action2"></span></p> -->
+            <p>Reward: <span id="reward2"></span></p>
+            <p>Score: <span id="score2"></span></p>
+        </div>
+      </div>
+    </div>
+    <div id="overview-bottom-section" style="width: 100%; background: #eaf6fb; padding: 24px 0 24px 0; border-radius: 12px; display: flex; flex-direction: column; align-items: center; margin-top: 10px;">
+        <!-- Add explanation input below the compare buttons -->
+        <div id="feedback-explanation-container" style="margin-top: 40px; width: 60%; text-align: center;">
+            <label for="feedback-explanation-input" style="font-weight: bold;">Please explain your choice in a few words:</label>
+            <input type="text" id="feedback-explanation-input" style="width: 60%; margin-top: 5px;" placeholder="..." />
+        </div>
+        <div id="bottom-buttons" style="margin-bottom: 18px;">
+            <button id="next-episode-button">Next Round</button>
+            <button id="update-agent-button" style="margin-left: 10px;">Update Agent</button>
+        </div>
+        
+    </div>
+</div>
+</div>
+      
+<!-- Action Dropdown Menu -->
+<div id="action-dropdown" class="dropdown" style="display: none;">
+    <div class="dropdown-item">move forward</div>
+    <div class="dropdown-item">turn right</div>
+    <div class="dropdown-item">turn left</div>
+    <div class="dropdown-item">pickup</div>
+</div>
+
+    <!-- Compare Agent Update Page -->
+    <div id="compare-agent-update-page" class="page" style="display: none;">
+        <h2>Comparing Update Strategies</h2>
+        <div style="position: relative; width: 100%; display: flex; flex-direction: column; align-items: center;">
+            <div id="compare-container" style="display: flex; justify-content: space-around; margin: 20px; position: relative;">
+                <div style="text-align: center; border: 1px solid #ccc; padding: 10px;">
+                    <h3>Previous Strategy</h3>
+                    <canvas id="previous-agent-canvas" style="background: #f0f0f0; width: 400px; height: 400px;"></canvas>
+                </div>
+                <div style="text-align: center; border: 1px solid #ccc; padding: 10px;">
+                    <h3>Updated Strategy</h3>
+                    <canvas id="updated-agent-canvas" style="background: #f0f0f0; width: 400px; height: 400px;"></canvas>
+                </div>
+            </div>
+        </div>
+        <!-- Add explanation input below the compare buttons -->
+        <div id="compare-explanation-container" style="margin-top: 40px; width: 60%; text-align: center;">
+            <label for="compare-explanation-input" style="font-weight: bold;">Please explain your choice in a few words:</label>
+            <input type="text" id="compare-explanation-input" style="width: 60%; margin-top: 5px;" placeholder="..." />
+        </div>
+        <!-- Other buttons -->
+        <div id="compare-buttons-container" style="display: flex; justify-content: space-around; margin-top: 20px;">
+            <button id="use-old-agent-button">Use Previous Strategy</button>
+            <button id="next-episode-compare-button">Use New Strategy</button>
+        </div>
+    </div>
+
+    <!-- Simple Update Page (for group 2) -->
+    <div id="simple-update-page" class="page" style="display: none; text-align: center; padding: 40px;">
+        <h2>Agent Update Status</h2>
+        <p style="font-size: 18px; margin: 30px 0;">Based on your feedback the agent has been updated</p>
+        <button id="next-episode-simple-button" style="font-size: 16px; padding: 12px 24px;">Next Round</button>
+    </div>
+
+    <!-- Summary Page -->
+    <div id="summary-page" class="page">
+        <h2>Game Ended - Well Done</h2>
+        <div style="font-size: 1.2em; color: #333; margin-bottom: 10px;">confirmation code - <span id="confirmation-code">APPL</span></div>
+        <div id="score-list-container">
+            <ul id="score-list"></ul>
+        </div>
+    </div>
+
+    <!-- Loader Overlay (hidden by default) -->
+<div id="loader-overlay" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(255,255,255,0.85); z-index:2000; justify-content:center; align-items:center; flex-direction:column;">
+  <div class="loader"></div>
+  <div style="margin-top: 30px; font-size: 2rem; color: #222;">Updating AI agent...</div>
+</div>
+
+    <script src="static/js/game_no_feedback.js"></script>
+
+</body>
+</html>

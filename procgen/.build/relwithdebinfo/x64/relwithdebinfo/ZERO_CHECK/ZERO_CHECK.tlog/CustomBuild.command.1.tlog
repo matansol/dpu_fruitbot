@@ -1,0 +1,10 @@
+^C:\USERS\MATAN\MASTER_THESIS\RL_ENVS\PROCGEN\PROCGEN\.BUILD\RELWITHDEBINFO\CMAKEFILES\0F53722F7A5A7D97D292F2AC0EEE70D3\GENERATE.STAMP.RULE
+setlocal
+C:\Users\matan\anaconda3\envs\rl_env\Library\bin\cmake.exe -SC:/Users/matan/master_thesis/rl_envs/procgen/procgen -BC:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo/codegen.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
