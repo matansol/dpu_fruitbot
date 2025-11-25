@@ -24,20 +24,21 @@ def load_agent(env, model_path):
     """Load a PPO agent from a saved model."""
     from stable_baselines3 import PPO
     
-    # Add .zip extension if not present
-    if not model_path.endswith('.zip'):
-        model_path = f"{model_path}.zip"
+    # Remove .zip extension if present since PPO.load() adds it automatically
+    if model_path.endswith('.zip'):
+        model_path = model_path[:-4]
     
-    # Verify file exists
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model file not found: {model_path}")
+    # Verify file exists (check with .zip extension)
+    zip_path = f"{model_path}.zip"
+    if not os.path.exists(zip_path):
+        raise FileNotFoundError(f"Model file not found: {zip_path}")
     
     try:
         model = PPO.load(model_path, env=env)
-        print(f"Successfully loaded model from {model_path}")
+        print(f"Successfully loaded model from {zip_path}")
         return model
     except Exception as e:
-        print(f"Error loading model from {model_path}: {e}")
+        print(f"Error loading model from {zip_path}: {e}")
         raise
 
 def image_to_base64(img):

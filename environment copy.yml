@@ -1,0 +1,32 @@
+channels:
+  - conda-forge
+  - pytorch
+
+dependencies:
+  - python=3.8
+  - c-compiler=1.3.0
+  - cmake=3.21.3
+  - qt=5.12.5  # conda-forge does not have 5.13.2 available
+  - pip=23.3.1  # Pin pip to <24.1 to support gym 0.21.0 metadata
+  - setuptools=65.5.0 # Downgrade setuptools via Conda first
+  - wheel=0.38.4      # Downgrade wheel via Conda first
+  - mpi4py=3.1.4
+  - numpy=1.21.6
+  - pandas=1.5.3
+  - matplotlib=3.7.1
+  - cffi
+  - pytorch=1.13.1
+  - cpuonly
+  - intel-openmp  # Required to fix WinError 182 (shm.dll)
+  - mkl           # Required dependency for PyTorch
+  - pip:
+    # Core dependencies
+    - gym3==0.3.3
+    - moderngl==5.8.2
+    - gym==0.21.0
+    # - gymnasium==0.29.1  # Required to load models trained with SB3 >= 2.0
+    - stable-baselines3==1.6.2
+    - filelock==3.0.10
+    - cloudpickle==1.2.2
+    - tqdm==4.66.1
+    - rich==13.7.0

@@ -91,6 +91,23 @@ docker build . --tag procgen --file docker/Dockerfile.dev
 docker run --rm -it procgen python -c "from procgen import ProcgenGym3Env; env = ProcgenGym3Env(num=1, env_name='coinrun'); print(env.observe())"
 ```
 
+### Environment setup quickstart
+
+#### Conda
+1. `conda env create --name procgen_env --file environment.yml`
+2. `conda activate procgen_env`
+3. `pip install -e .`
+
+To update an existing environment with new dependencies from `environment.yml`:
+```bash
+conda env update --name procgen_env --file environment.yml --prune
+```
+
+#### Virtualenv
+1. `python3 -m venv .venv && source .venv/bin/activate` (use `Scripts\activate` on Windows).
+2. `pip install --upgrade pip`
+3. `pip install procgen` or `pip install -e .` after cloning the repo.
+
 ## Environments
 
 The observation space is a box space with the RGB pixels the agent sees in a numpy array of shape (64, 64, 3).  The expected step rate for a human player is 15 Hz.

@@ -164,11 +164,10 @@ def _attempt_configure(build_type, package):
 
 def build(package=False, debug=False):
     """
-    Build the requested environment in a process-safe manner and only once per process.
+    Build procgen from source.
+    Set PROCGEN_NO_BUILD=1 environment variable to skip auto-build (only if DLL exists).
     """
     build_dir = os.path.join(SCRIPT_DIR, ".build")
-    os.makedirs(build_dir, exist_ok=True)
-
     build_type = "relwithdebinfo"
     if debug:
         build_type = "debug"

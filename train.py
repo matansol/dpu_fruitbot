@@ -15,12 +15,18 @@ Notes:
 - We depend on stable-baselines3 (SB3) and torch. Install if missing.
 - Python 3.10 is supported by SB3 1.8.x (Gym API) and SB3 2.x (Gymnasium API).
   This script works with either, but defaults to using Gym.
+
+IMPORTANT - Manual Rebuild Required:
+- If you modify C++ files in procgen/src/, you MUST rebuild before training:
+  python -c "from procgen.builder import build; build()"
+- Python-only changes (wrappers, this script) do NOT require rebuild.
 """
 
 import argparse
 import os
 import time
 from pathlib import Path
+from typing import Optional
 
 # Prefer Gym for compatibility with procgen's registration.
 # Gymnasium is optional; if you prefer it, pass --use-gymnasium.
@@ -64,37 +70,34 @@ try:
 except Exception:
     pg_make_env = None
 
-# Import wrappers for action space reduction
-try:
-    from procgen.wrappers import make_fruitbot_basic  # type: ignore
-except Exception:
-    make_fruitbot_basic = None
-
 
 def make_env_fn(
     env_id: str,
-    render_mode: str | None = None,
+    render_mode: Optional[str] = None,
     use_gymnasium: bool = False,
-    use_source: bool = True,
+    use_source: bool = False,  # Changed default to False - no need to build from source
     **kwargs,
 ):
     """Return a thunk that creates a single env instance when called.
 
     kwargs are passed through to gym.make (e.g., distribution_mode, num_levels, start_level).
+    
+    Note: use_source=True is only needed if you're actively developing Procgen's C++ code.
+    For normal training, use_source=False (default) is recommended.
     """
     def _thunk():
-        # Preferred: build directly from source without going through gym.make registry
-        # This uses procgen.gym_registration.make_env which returns a Gym-compatible env
+        # Standard path: use gym.make registry (no rebuild needed)
         env = None
+        
+        # Only use source build if explicitly requested
         if use_source and pg_make_env is not None:
             try:
-                # pg_make_env expects env_name in kwargs and handles render_mode internally
                 env = pg_make_env(render_mode=render_mode, **kwargs)
             except Exception:
                 env = None
 
         if env is None:
-            # Fallback paths: create via gymnasium or gym
+            # Standard path: create via gymnasium or gym
             if env_id.startswith("procgen:") and gym is not None:
                 env = gym.make(env_id, render_mode=render_mode, **kwargs)
                 if 'render_mode' not in getattr(env, 'metadata', {}):
@@ -108,19 +111,9 @@ def make_env_fn(
                     raise RuntimeError("No Gym/Gymnasium available to create the environment.")
                 env = lib.make(env_id, render_mode=render_mode, **kwargs)
 
-        # Skip EnvCompatibility wrapper - it causes seed() issues with Procgen
-        # Our custom wrapper will handle space conversions instead
+        # Wrappers are now applied in gym_registration.py before Gym conversion
+        # No need to apply them here
         
-        # Apply FruitBot action space wrapper (4 basic actions: left, right, stay, throw)
-        # This wrapper also converts spaces to gymnasium for SB3 2.x compatibility
-        if kwargs.get("env_name") == "fruitbot" and make_fruitbot_basic is not None:
-            env = make_fruitbot_basic(env)
-            print(f"Applied FruitBot basic action wrapper - action space reduced to 4 actions")
-        
-        # Wrap with Monitor to record episode stats compatible with SB3
-        if hasattr(env, "spec") and env.spec is not None and getattr(env.spec, "max_episode_steps", None):
-            # Gym TimeLimit usually applied via spec
-            pass
         env = Monitor(env)
         return env
 
@@ -129,11 +122,11 @@ def make_env_fn(
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train PPO on Procgen")
-    p.add_argument("--env", required=True, help="Procgen env name, e.g., fruitbot, coinrun, jumper")
+    p.add_argument("--env", default="fruitbot", help="Procgen env name, e.g., fruitbot, coinrun, jumper")
     p.add_argument("--total-steps", type=int, default=1_000_000, help="Total training timesteps")
     p.add_argument("--n-envs", type=int, default=8, help="Number of parallel envs (use 1 on low-end/Windows if needed)")
     p.add_argument("--n-steps", type=int, default=256, help="PPO n_steps")
-    p.add_argument("--batch-size", type=int, default=512, help="PPO batch_size")
+    p.add_argument("--batch-size", type=int, default=1024, help="PPO batch_size")
     p.add_argument("--learning-rate", type=float, default=1e-3, help="PPO learning rate")
     p.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     p.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
@@ -146,7 +139,7 @@ def parse_args():
     p.add_argument("--save-freq", type=int, default=100_000, help="Checkpoint save frequency (timesteps)")
     p.add_argument("--save-model", type=str, default=None, help="Path to checkpoint to resume training from (e.g., models/fruitbot/20240115-120000/ppo_1000000_steps.zip)")
     p.add_argument("--use-gymnasium", action="store_true", default=False, help="Use gymnasium instead of gym if available")
-    p.add_argument("--no-source", dest="use_source", action="store_false", help="Do not build envs from procgen source; use gym/gymnasium make")
+    p.add_argument("--use-source", action="store_true", default=False, help="Build envs from procgen source (only needed for C++ development)")
     # Procgen-specific knobs
     p.add_argument("--distribution-mode", type=str, default="hard", choices=["easy","hard","extreme","memory","exploration"], help="Procgen difficulty mode")
     p.add_argument("--num-levels", type=int, default=0, help="Number of levels (0 = unlimited)")
@@ -166,7 +159,7 @@ def main():
     args = parse_args()
 
     # Resolve env id registered by procgen on gym import
-    env_id = f"procgen:procgen-{args.env}-v0"
+    env_id = f"procgen-{args.env}-v0"
 
     # Reproducibility
     np.random.seed(args.seed)
@@ -198,6 +191,9 @@ def main():
         env_kwargs["fruitbot_reward_negative"] = args.fruitbot_reward_negative
         env_kwargs["fruitbot_reward_wall_hit"] = args.fruitbot_reward_wall_hit
         env_kwargs["fruitbot_reward_step"] = args.fruitbot_reward_step
+        env_kwargs["use_discrete_action_wrapper"] = True
+        env_kwargs["use_stay_bonus_wrapper"] = True
+        env_kwargs["stay_bonus"] = 0.1
         print(f"\nFruitBot Reward Configuration:")
         print(f"  Completion bonus: {args.fruitbot_reward_completion}")
         print(f"  Good fruit reward: {args.fruitbot_reward_positive}")

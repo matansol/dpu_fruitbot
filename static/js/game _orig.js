@@ -64,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let feedbackActionMap = {};
     let anotherExampleClickCount = 0; // Counter for "Another Example" button clicks
     let agentGroup = null; // Store the chosen agent group from compare_agents backend
-    const actionsNameList = ['north', 'south', 'east', 'west', 'stop'];
+    const actionsNameList = ['forward', 'turn right', 'turn left', 'pickup'];
     
     // Store demonstration time globally
     let demonstrationTime = null;
@@ -484,7 +484,6 @@ document.addEventListener('DOMContentLoaded', () => {
         actions = data.actions.map(a => ({ ...a, orig_action: a.action }));
         currentActionIndex = 0;
         feedbackImages = data.feedback_images;
-        console.log("feedbackImages=", feedbackImages)
         actionsCells = data.actions_cells;
         cumulative_rewards = data.cumulative_rewards;
         
@@ -580,17 +579,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function relativeDirection(origAction, newAction, origDir) {
-        // For Pacman, actions are absolute directions (north, south, east, west, stop)
-        // No need for relative direction calculation
-        // Just return the action itself as it represents the absolute direction
-        const actionToDir = {
-            'north': 'up',
-            'south': 'down', 
-            'east': 'right',
-            'west': 'left',
-            'stop': origDir || 'up'  // Keep current direction if stopping
-        };
-        return actionToDir[newAction] || origDir || 'up';
+        let directionNumber = {0:"left", 1:"up", 2:"right", 3:"down", "left": 0, "up": 1, "right": 2, "down": 3}
+        let newDir = directionNumber[origDir]
+        if (origAction == "turn left"){
+            newDir += 1
+        }
+        else if (origAction == "turn right"){
+            newDir += -1
+        }
+        
+        if (newAction == "turn left"){
+            newDir += -1
+        }
+        else if (newAction == "turn right"){
+            newDir += 1
+        }
+        newDir = (4+newDir) % 4;
+        return directionNumber[newDir]
+        
     }
 
     function drawActionSymbolOnOverviewImage(action, actionDir, origActionDir, col, row) {
@@ -632,21 +638,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Parse action - for Pacman, actions are: north, south, east, west, stop
+        // Parse action and direction
         let actionType = action;
         let direction = actionDir;
-        
-        // Map Pacman actions to visual directions
-        const actionToDirMap = {
-            'north': 'up',
-            'south': 'down',
-            'east': 'right',
-            'west': 'left',
-            'stop': null  // No direction for stop
-        };
-        
-        if (actionToDirMap[action] !== undefined) {
-            direction = actionToDirMap[action];
+        if (action.startsWith('turn')) {
+            actionType = 'turn';
+        } else if (action.startsWith('pickup')) {
+            actionType = 'pickup';
+        } else if (action === 'forward') {
+            actionType = 'forward';
         }
 
         function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius, color) {
@@ -666,24 +666,6 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.shadowBlur = 0;
             ctx.restore();
         }
-        
-        function drawStopSymbol(ctx, cx, cy, size, color) {
-            ctx.save();
-            // Draw circle
-            ctx.beginPath();
-            ctx.arc(cx, cy, size, 0, 2 * Math.PI);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
-            ctx.stroke();
-            // Draw X inside
-            ctx.beginPath();
-            ctx.moveTo(cx - size * 0.5, cy - size * 0.5);
-            ctx.lineTo(cx + size * 0.5, cy + size * 0.5);
-            ctx.moveTo(cx + size * 0.5, cy - size * 0.5);
-            ctx.lineTo(cx - size * 0.5, cy + size * 0.5);
-            ctx.stroke();
-            ctx.restore();
-        }
 
         // Direction vectors
         const dirVectors = {
@@ -693,13 +675,9 @@ document.addEventListener('DOMContentLoaded', () => {
             right: { dx: 1, dy: 0 }
         };
 
-        // Draw the correct symbol for Pacman actions
-        if (action === 'stop') {
-            // Draw stop symbol (circle with X)
-            const size = Math.min(cellWidth, cellHeight) * 0.15;
-            drawStopSymbol(ctx, centerX, centerY, size, 'white');
-        } else if (direction) {
-            // Draw directional arrow for north, south, east, west
+        // Draw the correct symbol using the new drawArrow signature
+        if (actionType === 'forward') {
+            // Arrow line stops at base of arrow head
             const vec = dirVectors[direction] || dirVectors.up;
             const dx = vec.dx * cellWidth * 0.5;
             const dy = vec.dy * cellHeight * 0.5;
@@ -724,6 +702,38 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             // Draw the arrow head at the tip
             drawArrow(ctx, endX, endY, dx - (length - lineLength) * Math.cos(angle), dy - (length - lineLength) * Math.sin(angle), headSize, 'white');
+        } else if (actionType === 'turn') {
+            // Draw a short line (stem) for the turn arrow
+            const vec = dirVectors[direction] || dirVectors.right;
+            const stemLen = Math.min(cellWidth, cellHeight) * 0.18; // 18% of cell size
+            const tipX = centerX + vec.dx * stemLen;
+            const tipY = centerY + vec.dy * stemLen;
+            // Draw the short line
+            ctx.save();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(tipX, tipY);
+            ctx.stroke();
+            ctx.restore();
+            // Draw the arrow head at the tip of the short line
+            const headSize = 18;
+            drawArrow(ctx, tipX, tipY, vec.dx * stemLen, vec.dy * stemLen, headSize, 'white');
+        } else if (actionType === 'pickup') {
+            // Star in the pickup direction
+            const vec = dirVectors[direction] || dirVectors.up;
+            const starX = centerX + vec.dx * cellWidth * 0.15;
+            const starY = centerY + vec.dy * cellHeight * 0.15;
+            drawStar(
+                ctx,
+                starX,
+                starY,
+                5,
+                Math.min(cellWidth, cellHeight) * 0.13,
+                Math.min(cellWidth, cellHeight) * 0.05,
+                'white'
+            );
         }
     }
 

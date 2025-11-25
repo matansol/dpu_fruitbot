@@ -206,13 +206,13 @@ class FruitBotGame : public BasicAbstractGame {
         int object_group_size = 6;
         int buf_h = 4;
         float door_prob = .125;
-        float min_pct = .1;
+        float min_pct = .4;
 
         if (options.distribution_mode == EasyMode) {
             // num_walls = 5;
             object_group_size = 2;
             door_prob = 0;
-            min_pct = .2;
+            min_pct = .3;
         }
 
         std::vector<int> partition = rand_gen.partition(main_height - min_sep * num_walls - buf_h, num_walls);

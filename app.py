@@ -4,6 +4,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import time
 import copy
 import numpy
+import numpy as np
 import json
 from datetime import datetime
 import random
@@ -41,7 +42,7 @@ from dpu_clf import (
 )
 
 from functools import reduce
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple, List, Union
 
 # Procgen Fruitbot action constants
 # Procgen uses 15 discrete actions (standard for most Procgen games)
@@ -60,18 +61,18 @@ FRUITBOT_ACTIONS = {
 
 # ---------------------- FRUITBOT HELPER FUNCTIONS ----------------------
 
-def get_fruitbot_position(env):
+def get_fruitbot_position(env: gym.Env) -> Optional[Tuple[int, int]]:
     """Extract agent position from Procgen environment if available."""
     # Procgen doesn't expose position directly, return None
     # Position would need to be tracked through observations
     return None
 
-def get_fruitbot_observation(env):
+def get_fruitbot_observation(env: gym.Env) -> np.ndarray:
     """Get observation from Fruitbot environment."""
     obs, info = env.reset() if not hasattr(env, '_obs') else (env._obs, {})
     return obs
 
-def will_it_stuck(agent, env):
+def will_it_stuck(agent: Any, env: gym.Env) -> bool:
     """Check if agent will get stuck - adapted for Procgen."""
     # Procgen has max_steps built-in, no custom truncation needed
     return False
@@ -186,26 +187,34 @@ class UserChoice(Base):
     unique_envs = Column(String(20), nullable=True)
     examples_shown = Column(Integer, nullable=True)
 
-def clear_database():
+def clear_database() -> None:
     """Clears the database tables."""
     print("Clearing database tables...")
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
-def create_database():
+def create_database() -> None:
     """Creates the database tables if they do not already exist."""
     print("Ensuring database tables are created...")
     Base.metadata.create_all(bind=engine)
 
 
 # Helper
-async def in_thread(func, *args, **kw):
+async def in_thread(func: callable, *args, **kw) -> Any:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: func(*args, **kw))
 
 
 class GameControl:
-    def __init__(self, env, models_paths, models_distance, user_id, similar_level_env=0, feedback_partial_view=True):
+    def __init__(
+        self,
+        env: gym.Env,
+        models_paths: Dict[int, Dict[str, Any]],
+        models_distance: Dict[int, List[Tuple[int, str, List]]],
+        user_id: str,
+        similar_level_env: int = 0,
+        feedback_partial_view: bool = True
+    ) -> None:
         self.env = env
         self.agent_index = 0  # Start with first agent
         self.models_paths = models_paths
@@ -217,6 +226,7 @@ class GameControl:
         self.episode_cumulative_rewards = []
         self.agent_last_pos = None
         self.episode_images = []
+        self.episode_frames = []  # Store raw RGB frames for video creation
         self.episode_obs = []
         self.episode_agent_locations = []
         self.invalid_moves = 0
@@ -241,7 +251,7 @@ class GameControl:
         # self.last_unique_env: int = 0 # the last unique env that was given to the user
         
     @timeit
-    def reset(self):
+    def reset(self) -> np.ndarray:
         self.update_agent(None, None)
         
         # Procgen reset returns observation and info
@@ -262,10 +272,14 @@ class GameControl:
 
         self.score = 0
         self.invalid_moves = 0
+        
+        # Reset frame storage
+        self.episode_frames = []
+        
         return obs
 
     @timeit
-    def actions_to_moves_sequence(self, episode_actions):
+    def actions_to_moves_sequence(self, episode_actions: List[int]) -> List[Tuple[str, str]]:
         small_arrow = 'turn '  # small arrow is used to indicate the agent turning left or right
         agent_dir = "right"
         move_sequence = []
@@ -285,7 +299,7 @@ class GameControl:
         return move_sequence
 
     # @timeit
-    def step(self, action, agent_action=False):
+    def step(self, action: int, agent_action: bool = False) -> Dict[str, Any]:
         observation, reward, terminated, truncated, info = self.env.step(action)
         done = terminated or truncated
         self.score += reward
@@ -294,7 +308,6 @@ class GameControl:
             self.scores_lst.append(self.score)
             self.last_score = self.score
         
-        # Procgen doesn't have illegal moves in the same way
         # All actions are valid, just add to episode
         self.episode_actions.append(action)
         if self.episode_cumulative_rewards:
@@ -306,7 +319,13 @@ class GameControl:
         
         # Procgen render returns RGB array
         img = self.env.render()
+        
+        # Save raw frame for video creation
+        self.episode_frames.append(img.copy())
+        
         image_base64 = image_to_base64(img)
+        print("="*50)
+        print(image_base64)
         self.episode_images.append(image_base64)
 
         self.current_obs = observation
@@ -326,7 +345,7 @@ class GameControl:
             'agent_index': self.agent_index
         }
 
-    def handle_action(self, action_str):
+    def handle_action(self, action_str: str) -> Dict[str, Any]:
         """Map keyboard input to Fruitbot actions."""
         key_to_action = {
             "ArrowLeft": FRUITBOT_ACTIONS['LEFT'],
@@ -347,7 +366,7 @@ class GameControl:
         return self.step(action)
 
     @timeit
-    def get_initial_observation(self):
+    def get_initial_observation(self) -> Dict[str, Any]:
     
         self.current_obs = self.reset()
         self.agent_last_pos = None
@@ -358,6 +377,10 @@ class GameControl:
         img = self.env.render()
         if img is None:
             raise Exception("initial observation rendering failed")
+        
+        # Save initial frame
+        self.episode_frames.append(img.copy())
+        
         image_base64 = image_to_base64(img)
         self.episode_images = [image_base64]  # Store base64 string, not raw image
         self.episode_num += 1
@@ -378,7 +401,7 @@ class GameControl:
             'agent_index': self.agent_index,
         }
 
-    def agent_action(self):
+    def agent_action(self) -> Dict[str, Any]:
         # Get action from PPO agent
         agent_config = self.models_paths[self.agent_index]
         
@@ -398,14 +421,20 @@ class GameControl:
     #         obs, r, ter, tru, info = tmp_env.step(action)
     #     return tmp_env, obs
 
-    def revert_to_old_agent(self):
+    def revert_to_old_agent(self) -> None:
         self.ppo_agent = self.prev_agent
         self.agent_index = self.prev_agent_index
         self.current_agent_path = self.models_paths[self.agent_index]['path']
         print(f'(revert) prev agent index={self.prev_agent_index}, prev agent path={self.prev_agent_path}')
         print(f"(revert) current agent index={self.agent_index}")
 
-    def count_similar_actions(self, env, other_agent, other_agent_config, feedback_indexes):
+    def count_similar_actions(
+        self,
+        env: gym.Env,
+        other_agent: Any,
+        other_agent_config: Dict[str, Any],
+        feedback_indexes: List[int]
+    ) -> int:
         similar_actions = 0
         
         for i, action in enumerate(self.episode_actions):
@@ -433,7 +462,7 @@ class GameControl:
     #     return False
 
     @timeit
-    def update_agent(self, data, sid):
+    def update_agent(self, data: Optional[Dict[str, Any]], sid: Optional[str]) -> Optional[bool]:
         print(f"(update agent), data={data}")
         if self.ppo_agent is None:
             agent_config = self.models_paths[self.agent_index]
@@ -568,7 +597,12 @@ class GameControl:
         return True
 
     @timeit
-    def agents_different_routs(self, similarity_level=5, stuck_count=0, same_path_count=0):
+    def agents_different_routs(
+        self,
+        similarity_level: int = 5,
+        stuck_count: int = 0,
+        same_path_count: int = 0
+    ) -> Dict[str, Any]:
         if self.ppo_agent == None or self.prev_agent == None:
             print(f"No two agents to compare ppo_agent: {self.ppo_agent}, prev_agent: {self.prev_agent}")
             if self.ppo_agent == None and self.prev_agent == None:
@@ -609,10 +643,10 @@ class GameControl:
         }
 
     @timeit
-    def end_of_episode_summary(self, need_feedback_data:bool = True):
+    def end_of_episode_summary(self, need_feedback_data: bool = True) -> Dict[str, Any]:
         path_img_base64 = None
         actions_locations = []
-        images_buf_list = [] if need_feedback_data else None
+        # images_buf_list = [] if need_feedback_data else None
         actions_cells = [] if need_feedback_data else None
 
         return {
@@ -626,7 +660,7 @@ class GameControl:
             'feedback_score': self.feedback_score - (self.number_of_feedbacks - self.feedback_score),
         }
 
-    def save_no_user_feedback(self, data, sid):
+    def save_no_user_feedback(self, data: Dict[str, Any], sid: str) -> None:
         user_explanation = data.get('userExplanation')
         if save_to_db and sid:
             try:
@@ -659,7 +693,12 @@ class GameControl:
             finally:
                 session.close()
 
-    def save_user_choice(self, choice_to_update, choice_explanation, demonstration_time_fmt):
+    def save_user_choice(
+        self,
+        choice_to_update: bool,
+        choice_explanation: str,
+        demonstration_time_fmt: str
+    ) -> None:
         session = SessionLocal()
         try:
             unique_env = self.demonstration_unique_envs[-1] if self.demonstration_unique_envs else (self.board_seen[-1] if self.board_seen else 0)
@@ -688,12 +727,64 @@ class GameControl:
         finally:
             session.close()
 
-    def revert_to_old_agent(self):
+    def revert_to_old_agent(self) -> None:
         self.ppo_agent = self.prev_agent
         self.agent_index = self.prev_agent_index
         self.current_agent_path = self.models_paths[self.agent_index]['path']
         print(f'(revert) prev agent index={self.prev_agent_index}, prev agent path={self.prev_agent_path}')
         print(f"(revert) current agent index={self.agent_index}")
+
+    def create_episode_video(
+        self,
+        output_path: Optional[str] = None,
+        fps: int = 30
+    ) -> Optional[str]:
+        """
+        Create a video from the saved episode frames.
+        
+        Args:
+            output_path: Path to save the video file. If None, saves to videos/{user_id}_episode_{episode_num}.mp4
+            fps: Frames per second for the video
+        
+        Returns:
+            Path to the created video file
+        """
+        if len(self.episode_frames) == 0:
+            print("No frames to create video from")
+            return None
+        
+        try:
+            import cv2
+            
+            # Create output directory if it doesn't exist
+            if output_path is None:
+                video_dir = os.path.join(os.path.dirname(__file__), 'videos')
+                os.makedirs(video_dir, exist_ok=True)
+                output_path = os.path.join(video_dir, f'{self.user_id}_episode_{self.episode_num}.mp4')
+            
+            # Get frame dimensions
+            height, width, _ = self.episode_frames[0].shape
+            
+            # Create video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+            # Write frames
+            for frame in self.episode_frames:
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                out.write(frame_bgr)
+            
+            out.release()
+            print(f"Video saved to: {output_path}")
+            return output_path
+            
+        except ImportError:
+            print("OpenCV (cv2) not installed. Install with: pip install opencv-python")
+            return None
+        except Exception as e:
+            print(f"Error creating video: {e}")
+            return None
 
 # ---------------- Global Variables ----------------
 
@@ -703,8 +794,8 @@ sid_to_user: Dict[str, str] = {}
 # Procgen Fruitbot models configuration
 # TODO: Replace these paths with your actual trained Fruitbot models
 sub_models_dict = {
-    0: {'path': 'models/fruitbot/20251117-173536_easy/ppo_final.zip', 'name': 'FruitbotEasy1', 'type': 'ppo', 'vector': (1, 1, 1, 1, 1)},
-    1: {'path': 'models/fruitbot/20251116-195636/ppo_final.zip', 'name': 'FruitbotBase1', 'type': 'ppo', 'vector': (2, 2, 2, 2, 2)},
+    0: {'path': '../models/fruitbot/20251117-173536_easy/ppo_final.zip', 'name': 'FruitbotEasy1', 'type': 'ppo', 'vector': (1, 1, 1, 1, 1)},
+    1: {'path': '../models/fruitbot/20251116-195636/ppo_final.zip', 'name': 'FruitbotBase1', 'type': 'ppo', 'vector': (2, 2, 2, 2, 2)},
     # Add more trained agents as needed
 }
 
@@ -732,10 +823,21 @@ action_dir = {
 
 
 # ------------------ UTILITY FUNCTION -----------------------------
-async def finish_turn(response: dict, user_game: GameControl, sid: str, need_feedback_data: bool = True):
+async def finish_turn(
+    response: Dict[str, Any],
+    user_game: GameControl,
+    sid: str,
+    need_feedback_data: bool = True
+) -> None:
     """Common logic after an action is processed."""
     if response["done"]:
         summary = user_game.end_of_episode_summary(need_feedback_data)
+        
+        # Create video from episode frames
+        video_path = user_game.create_episode_video()
+        if video_path:
+            summary['video_path'] = video_path
+        
         # Send the summary to the front-end:
         await sio.emit("episode_finished", summary, to=sid)
     else:
@@ -745,32 +847,32 @@ async def finish_turn(response: dict, user_game: GameControl, sid: str, need_fee
 templates = Jinja2Templates(directory="templates")
 
 @app.get("/")
-def index(request: Request):
+def index(request: Request) -> HTMLResponse:
     """
     Return index.html or a basic HTML if you don't have Jinja2 templates.
     """
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index_orig.html", {"request": request})
 
 @app.post("/update_action")
-def update_action(payload: dict):
+def update_action(payload: dict) -> Dict[str, Any]:
     index = payload["index"]
     action = payload["action"]
     return {"status": "action updated", "index_example": index, "action": action}
 
 # -------------------- SOCKET.IO EVENTS ---------------------------
 @sio.event
-async def connect(sid, environ):
+async def connect(sid: str, environ: Dict[str, Any]) -> None:
     print(f"Client connected: {sid}")
 
 @sio.event
-async def disconnect(sid):
+async def disconnect(sid: str) -> None:
     print(f"Client disconnected: {sid}")
     # Remove the sid mapping (but keep the game control instance for future reconnects)
     if sid in sid_to_user:
         del sid_to_user[sid]
 
 @sio.on("start_game")
-async def start_game(sid, data, callback=None):
+async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable] = None) -> None:
     """
     When a user starts the game, they send their identifier (playerName).
     Create (or re-use) the GameControl instance corresponding to that user.
@@ -823,7 +925,7 @@ async def start_game(sid, data, callback=None):
     await sio.emit("game_update", response, to=sid)
 
 @sio.on("send_action")
-async def handle_send_action(sid, action):
+async def handle_send_action(sid: str, action: str) -> Dict[str, str]:
     """
     Handle a user action. Look up the GameControl instance using the sid mapping.
     """
@@ -863,7 +965,7 @@ async def handle_send_action(sid, action):
     return {"status": "success"}
 
 @sio.on("next_episode")
-async def next_episode(sid):
+async def next_episode(sid: str) -> None:
     user_id = sid_to_user.get(sid)
     if not user_id or user_id not in game_controls:
         await sio.emit("error", {"error": "User not found"}, to=sid)
@@ -873,7 +975,7 @@ async def next_episode(sid):
     await sio.emit("game_update", response, to=sid)
 
 @sio.on("ppo_action")
-async def ppo_action(sid):
+async def ppo_action(sid: str) -> None:
     user_id = sid_to_user.get(sid)
     if not user_id or user_id not in game_controls:
         await sio.emit("error", {"error": "User not found"}, to=sid)
@@ -883,7 +985,7 @@ async def ppo_action(sid):
     await finish_turn(response, user_game, sid)
 
 @sio.on("play_entire_episode")
-async def play_entire_episode(sid):
+async def play_entire_episode(sid: str) -> None:
     user_id = sid_to_user.get(sid)
     if not user_id or user_id not in game_controls:
         await sio.emit("error", {"error": "User not found"}, to=sid)
@@ -901,7 +1003,7 @@ async def play_entire_episode(sid):
 
 
 @sio.on("compare_agents")
-async def compare_agents(sid, data): # data={ playerName: playerNameInput.value, updateAgent: true, userFeedback: userFeedback, actions: actions, similarity_level: similarity_level }  
+async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playerName: playerNameInput.value, updateAgent: true, userFeedback: userFeedback, actions: actions, similarity_level: similarity_level }  
     user_id = sid_to_user.get(sid)
     if not user_id or user_id not in game_controls:
         await sio.emit("error", {"error": "User not found"}, to=sid)
@@ -925,7 +1027,7 @@ async def compare_agents(sid, data): # data={ playerName: playerNameInput.value,
     await sio.emit("compare_agents", res, to=sid)
 
 @sio.on("finish_game")
-async def finish_game(sid):
+async def finish_game(sid: str) -> None:
     user_id = sid_to_user.get(sid)
     if not user_id or user_id not in game_controls:
         await sio.emit("error", {"error": "User not found"}, to=sid)
@@ -935,7 +1037,7 @@ async def finish_game(sid):
     await sio.emit("finish_game", {"scores": scores}, to=sid)
 
 @sio.on("start_cover_page")
-async def start_cover_page(sid):
+async def start_cover_page(sid: str) -> None:
     """
     Handle the transition from the cover page to the welcome page.
     """
@@ -951,7 +1053,7 @@ async def start_cover_page(sid):
     await sio.emit("go_to_welcome_page", {}, to=sid)
 
 @sio.on("agent_selected")
-async def agent_selected(sid, data):
+async def agent_selected(sid: str, data: Dict[str, Any]) -> None:
     user_id = sid_to_user.get(sid)
     if not user_id or user_id not in game_controls:
         await sio.emit("error", {"error": "User not found"}, to=sid)
