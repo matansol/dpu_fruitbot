@@ -210,7 +210,7 @@ class FruitBotGame : public BasicAbstractGame {
 
         if (options.distribution_mode == EasyMode) {
             // num_walls = 5;
-            object_group_size = 2;
+            object_group_size = 2; // control the verity of foods/fruits
             door_prob = 0;
             min_pct = .3;
         }
@@ -258,6 +258,7 @@ class FruitBotGame : public BasicAbstractGame {
         if (options.fruitbot_reward_step != 0.0f) {
             step_data.reward += options.fruitbot_reward_step;
         }
+        // step_data.info['agent_x'] = agent->x
 
         if (special_action == 1 && (cur_time - last_fire_time) >= KEY_DURATION) {
             float vx = 0;

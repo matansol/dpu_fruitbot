@@ -158,6 +158,13 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Rebuild from source if --use-source is specified
+    if args.use_source:
+        print("Building procgen environment from source...")
+        from procgen.builder import build
+        build(debug=False)  # Set debug=True if you want debug symbols
+        print("Build complete.")
+
     # Resolve env id registered by procgen on gym import
     env_id = f"procgen-{args.env}-v0"
 

@@ -1,9 +1,9 @@
 import unittest
 import os
 import numpy as np
+import cv2  # Add this import at the top
 from stable_baselines3 import PPO
 import gym, procgen
-from procgen.wrappers import make_fruitbot_basic
 import imageio
 from PIL import Image
 
@@ -20,9 +20,10 @@ def print_wrapper_chain(env):
 class TestSaveObs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.screenshots_dir = "screenshots"
+        # cls.screenshots_dir = "screenshots"
+        cls.screenshots_dir = "tests/frameshots"
         os.makedirs(cls.screenshots_dir, exist_ok=True)
-        cls.model_path = "models/fruitbot/20251123-133459_easy/ppo_final.zip"
+        cls.model_path = "models\\fruitbot\\20251127-002723_easy\\ppo_final.zip"
 
     def setUp(self):
         self.env = gym.make(
@@ -69,7 +70,8 @@ class TestSaveObs(unittest.TestCase):
         self.assertIsNotNone(frame, "Initial frame should not be None")
 
         # Run a few steps and capture high-res frames
-        for step in range(5):
+        done = False
+        while not done:
             if self.model is not None:
                 action, _ = self.model.predict(obs, deterministic=True)
             else:
@@ -77,11 +79,8 @@ class TestSaveObs(unittest.TestCase):
             result = self.env.step(action)
             obs, rew, done, info = result
             frame = self.env.render()
-            if frame is not None:
+            if not done and frame is not None:
                 frames.append(frame)
-            if done:
-                obs = self.env.reset()
-                
 
         # Validate frames before saving
         valid_frames = []
@@ -94,12 +93,36 @@ class TestSaveObs(unittest.TestCase):
             else:
                 print(f"Skipping invalid frame with shape {arr.shape}")
 
-        # Save first frame as image
+        print(f"Captured {len(valid_frames)} valid frames out of {len(frames)} total frames")
+        
+        # Save frames as images
         if valid_frames:
-            img_path = os.path.join(self.screenshots_dir, "fruitbot_highres_frame.png")
-            Image.fromarray(valid_frames[0]).save(img_path)
-            print(f"Saved high-res screenshot to {img_path}")
-            self.assertTrue(os.path.exists(img_path), "Screenshot file should exist")
+            valid_frames = valid_frames + [valid_frames[-1]]*3  # Ensure at least one frame
+            for idx, frame in enumerate(valid_frames):
+                if idx % 3 == 0:  # Save every 3rd frame
+                    img_path = os.path.join(self.screenshots_dir, f"fruitbot_frame_{idx}.png")
+                    Image.fromarray(frame).save(img_path)
+                    print(f"Saved high-res screenshot to {img_path}")
+                    self.assertTrue(os.path.exists(img_path), f"Screenshot file {img_path} should exist")
+        else:
+            print("No frames captured!")
+            self.fail("No frames captured!")
+
+        # Save video using OpenCV
+        if valid_frames:
+            video_path = os.path.join(self.screenshots_dir, "fruitbot_run.mp4")
+            height, width, _ = valid_frames[0].shape
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(video_path, fourcc, 15.0, (width, height))
+            
+            for frame in valid_frames:
+                # Convert RGB to BGR for OpenCV
+                bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                out.write(bgr_frame)
+            
+            out.release()
+            print(f"Saved video to {video_path}")
+            self.assertTrue(os.path.exists(video_path), f"Video file {video_path} should exist")
         else:
             print("No frames captured!")
             self.fail("No frames captured!")

@@ -32,6 +32,8 @@ class ReducedActionWrapper(gym.ActionWrapper):
         if isinstance(act, np.ndarray):
             # VecEnv / SB3 sometimes give numpy scalars/arrays
             act = int(act)
+            if act == 3: # map THROW (3) to STAY (1)
+                act = 1
         return int(self.valid_actions[act])
     
     # def seed(self, seed=None):
@@ -85,9 +87,10 @@ class StayBonusWrapper(Wrapper):
     Wrapper that gives bonus reward when action == STAY (mapped action 2 in reduced space)
     """
     
-    def __init__(self, env, stay_bonus=0.1):
+    def __init__(self, env, stay_bonus=0.1, key_bonus=-0.1):
         super().__init__(env)
         self.stay_bonus = stay_bonus
+        self.key_bonus = key_bonus
         self._last_action = None
     
     def act(self, ac: Any) -> None:
@@ -104,6 +107,8 @@ class StayBonusWrapper(Wrapper):
             # Handle both single action and batch of actions
             if np.any(self._last_action == 2):
                 reward = reward + self.stay_bonus
+            if np.any(self._last_action == 3):
+                reward = reward + self.key_bonus
         
         return reward, obs, first
 

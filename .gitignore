@@ -94,6 +94,7 @@ htmlcov/
 coverage.xml
 *.cover
 .hypothesis/
+.tests/frameshots/
 
 # OS
 Thumbs.db

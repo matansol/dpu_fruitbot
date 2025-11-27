@@ -139,7 +139,7 @@ def evaluate_agent(
             steps += 1
             TOL = 1e-3
 
-            print(r)
+            # print(r)
 
             # Compare reward to configured event rewards (with tolerance)
             if np.isclose(r, fruitbot_reward_positive, atol=TOL, rtol=0.0):
@@ -181,7 +181,7 @@ def evaluate_agent(
 
     return stats
 
-
+# best model so far - models\fruitbot\20251124-155020_easy\ppo_final.zip
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate trained PPO agent on Procgen")
     parser.add_argument("--model", required=True, help="Path to saved model (.zip file)")
@@ -271,7 +271,10 @@ def main() -> None:
     print("-" * 60)
     
     # Run evaluation
-    stats = evaluate_agent(model, env, num_episodes=args.episodes, render=args.render, delay=args.delay)
+    stats = evaluate_agent(model, env, num_episodes=args.episodes, render=args.render, delay=args.delay, 
+                           fruitbot_reward_negative=args.fruitbot_reward_negative,
+                           fruitbot_reward_positive=args.fruitbot_reward_positive,
+                           fruitbot_reward_wall_hit=args.fruitbot_reward_wall_hit)
     
     # Print results
     print("\n" + "=" * 60)

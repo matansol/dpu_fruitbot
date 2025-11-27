@@ -87,12 +87,16 @@ class BaseProcgenEnv(CEnv):
             resource_root = os.path.join(SCRIPT_DIR, "data", "assets") + os.sep
             assert os.path.exists(resource_root)
 
-        lib_dir = os.path.join(SCRIPT_DIR, "data", "prebuilt")
+        lib_dir = os.path.join(SCRIPT_DIR, ".build", "relwithdebinfo", "RelWithDebInfo")
         if os.path.exists(lib_dir):
-            assert any([os.path.exists(os.path.join(lib_dir, name)) for name in ["libenv.so", "libenv.dylib", "env.dll"]]), "package is installed, but the prebuilt environment library is missing"
-            assert not debug, "debug has no effect for pre-compiled library"
+            # Check if the env.dll file exists in the specified directory
+            assert any(
+                os.path.exists(os.path.join(lib_dir, name))
+                for name in ["env.dll", "libenv.so", "libenv.dylib"]
+            ), "Prebuilt binaries are missing. Please rebuild or provide the binaries."
+            print("Using prebuilt binaries from:", lib_dir)
         else:
-            # only compile if we don't find a pre-built binary
+            # Only build if prebuilt binaries are not found
             lib_dir = build(debug=debug)
         
         self.combos = self.get_combos()

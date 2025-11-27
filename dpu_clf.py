@@ -274,5 +274,25 @@ def get_action_name(action_idx):
     return ACTION_NAMES.get(action_idx, f"ACTION_{action_idx}")
 
 
+## Fruitbot code
+def add_loc_on_observation(obs: np.ndarray, x_loc:int, y_loc:int) -> np.ndarray:
+    """
+    Get an game observation an 512x512x3 nparray and x and y location (0-15).
+    Add to the array a blue dot at the specified location.
+    """
+    obs_copy = obs.copy()
+    cell_size = 32  # Each cell is 32x32 pixels in 512x512 image
+    center_x = x_loc * cell_size + cell_size // 2
+    center_y = y_loc * cell_size + cell_size // 2
+    
+    # Draw a blue dot (circle) at the specified location
+    rr, cc = np.ogrid[:obs_copy.shape[0], :obs_copy.shape[1]]
+    circle = (rr - center_y) ** 2 + (cc - center_x) ** 2 <= (cell_size // 6) ** 2
+    obs_copy[circle] = [0, 0, 255]  # Blue color in RGB
+    
+    return obs_copy
+
+
+
 
 
