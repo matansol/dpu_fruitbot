@@ -5,8 +5,8 @@
 
 const std::string NAME = "fruitbot";
 
-const float COMPLETION_BONUS = 10.0;
-const int POSITIVE_REWARD = 1.0f;
+const float COMPLETION_BONUS = 10.0f;
+const int POSITIVE_REWARD = 1;
 const int PENALTY = -2.0f; // -4.0f
 
 const int BARRIER = 1;
@@ -20,7 +20,7 @@ const int PRESENT = 12;
 
 const int KEY_DURATION = 8;
 
-const float DOOR_ASPECT_RATIO = 3.25;
+const float DOOR_ASPECT_RATIO = 3.25f;
 
 class FruitBotGame : public BasicAbstractGame {
   public:
@@ -30,11 +30,11 @@ class FruitBotGame : public BasicAbstractGame {
 
     FruitBotGame()
         : BasicAbstractGame(NAME) {
-        mixrate = .5;
+        mixrate = 0.5f;
         maxspeed = 0.85f;
 
-        min_dim = 5;
-        bullet_vscale = .5;
+        min_dim = 5.0f;
+        bullet_vscale = 0.5f;
         bg_tile_ratio = -1;
 
         out_of_bounds_object = OUT_OF_BOUNDS_WALL;
@@ -153,7 +153,7 @@ class FruitBotGame : public BasicAbstractGame {
             main_width = 20;
         }
 
-        main_height = 60;
+        main_height = 30;
     }
 
     void set_action_xy(int move_action) override {
@@ -165,10 +165,10 @@ class FruitBotGame : public BasicAbstractGame {
     void add_walls(float ry, bool use_door, float min_pct) {
         float rw = main_width;
         float wall_ry = 0.3f;
-        float lock_rx = .25;
+        float lock_rx = 0.25f;
         float lock_ry = 0.45f;
 
-        float pct = min_pct + .2 * rand_gen.rand01();
+        float pct = min_pct + 0.2f * rand_gen.rand01();
 
         if (use_door) {
             pct += 0.1f;
@@ -205,14 +205,14 @@ class FruitBotGame : public BasicAbstractGame {
         int num_walls = 10;
         int object_group_size = 6;
         int buf_h = 4;
-        float door_prob = .125;
-        float min_pct = .4;
+        float door_prob = 0.125f;
+        float min_pct = 0.4f;
 
         if (options.distribution_mode == EasyMode) {
-            // num_walls = 5;
+            num_walls = 5;
             object_group_size = 2; // control the verity of foods/fruits
-            door_prob = 0;
-            min_pct = .3;
+            door_prob = 0.0f;
+            min_pct = 0.3f;
         }
 
         std::vector<int> partition = rand_gen.partition(main_height - min_sep * num_walls - buf_h, num_walls);
@@ -234,12 +234,12 @@ class FruitBotGame : public BasicAbstractGame {
         int num_bad = rand_gen.randn(10) + 10;
 
         for (int i = 0; i < main_width; i++) {
-            auto present = add_entity_rxy(i + .5, main_height - .5, 0, 0, .5, .5, PRESENT);
+            auto present = add_entity_rxy(i + 0.5f, main_height - 0.5f, 0, 0, 0.5f, 0.5f, PRESENT);
             choose_random_theme(present);
         }
 
-        spawn_entities(num_good, .5, GOOD_OBJ, 0, 0, main_width, main_height);
-        spawn_entities(num_bad, .5, BAD_OBJ, 0, 0, main_width, main_height);
+        spawn_entities(num_good, 0.5f, GOOD_OBJ, 0, 0, main_width, main_height);
+        spawn_entities(num_bad, 0.5f, BAD_OBJ, 0, 0, main_width, main_height);
 
         for (auto ent : entities) {
             if (ent->type == GOOD_OBJ || ent->type == BAD_OBJ) {
@@ -248,7 +248,7 @@ class FruitBotGame : public BasicAbstractGame {
             }
         }
 
-        agent->rotation = -1 * PI / 2;
+        agent->rotation = -1.0f * PI / 2.0f;
     }
 
     void game_step() override {
@@ -261,9 +261,9 @@ class FruitBotGame : public BasicAbstractGame {
         // step_data.info['agent_x'] = agent->x
 
         if (special_action == 1 && (cur_time - last_fire_time) >= KEY_DURATION) {
-            float vx = 0;
-            float vy = 1;
-            auto new_bullet = add_entity(agent->x, agent->y, vx * bullet_vscale, vy * bullet_vscale, .25, PLAYER_BULLET);
+            float vx = 0.0f;
+            float vy = 1.0f;
+            auto new_bullet = add_entity(agent->x, agent->y, vx * bullet_vscale, vy * bullet_vscale, 0.25f, PLAYER_BULLET);
             new_bullet->expire_time = KEY_DURATION;
             new_bullet->collides_with_entities = true;
             last_fire_time = cur_time;

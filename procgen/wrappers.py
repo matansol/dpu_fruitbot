@@ -84,7 +84,7 @@ class InfoRgbRenderWrapper(Wrapper):
 
 class StayBonusWrapper(Wrapper):
     """
-    Wrapper that gives bonus reward when action == STAY (mapped action 2 in reduced space)
+    Wrapper that gives bonus reward when action == STAY (mapped action 1 in reduced space)
     """
     
     def __init__(self, env, stay_bonus=0.1, key_bonus=-0.1):
@@ -101,11 +101,11 @@ class StayBonusWrapper(Wrapper):
     def observe(self) -> Tuple[Any, Any, Any]:
         reward, obs, first = self.env.observe()
         
-        # Add bonus reward if action was 2 (STAY in reduced action space)
-        # STAY is index 2 in [LEFT=0, RIGHT=1, STAY=2, THROW=3]
+        # Add bonus reward if action was 1 (STAY in reduced action space)
+        # STAY is index 1 in [LEFT=0, STAY=1, RIGHT=2, THROW=3]
         if self._last_action is not None:
             # Handle both single action and batch of actions
-            if np.any(self._last_action == 2):
+            if np.any(self._last_action == 1):
                 reward = reward + self.stay_bonus
             if np.any(self._last_action == 3):
                 reward = reward + self.key_bonus
@@ -120,7 +120,7 @@ class StayBonusWrapper(Wrapper):
 
 
 # FruitBot specific actions
-FRUITBOT_BASIC_ACTIONS = [1, 7, 4, 9]  # LEFT, RIGHT, STAY, THROW
+FRUITBOT_BASIC_ACTIONS = [1, 4, 7, 9]  # LEFT, STAY, RIGHT, THROW
 
 
 def make_fruitbot_basic(env):

@@ -156,14 +156,7 @@ def evaluate_agent(
         total_bad_food += ep_bad
         total_wall_hits += ep_wall
 
-        # Check if level was completed
-        completed = False
-        if isinstance(info, dict):
-            completed = info.get('level_complete', False)
-            if completed:
-                completion_count += 1
-
-        print(f"Episode {ep+1}/{num_episodes}: Reward={total_reward:.2f}, Steps={steps}, Completed={completed}, Good={ep_good}, Bad={ep_bad}, WallHits={ep_wall}")
+        print(f"Episode {ep+1}/{num_episodes}: Reward={total_reward:.2f}, Steps={steps}, Good={ep_good}, Bad={ep_bad}, WallHits={ep_wall}")
 
     stats = {
         'mean_reward': np.mean(episode_rewards),
@@ -251,7 +244,7 @@ def main() -> None:
     env_kwargs["fruitbot_reward_step"] = args.fruitbot_reward_step
     env_kwargs["use_discrete_action_wrapper"] = True
     env_kwargs["use_stay_bonus_wrapper"] = True
-    env_kwargs["stay_bonus"] = 0.1
+    env_kwargs["stay_bonus"] = 0
     
     render_mode = "human" if args.render else None
     env_id = f"procgen-{args.env}-v0"
