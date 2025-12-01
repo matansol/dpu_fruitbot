@@ -95,8 +95,11 @@ coverage.xml
 *.cover
 .hypothesis/
 tests/frameshots/
-/tests/frameshots/**
-!/tests/frameshots/.gitkeep
+tests/
+tests/**/*.jpg
+tests/**/*.gif
+tests/**/*.mp4
+tests/**/*.avi
 
 # OS
 Thumbs.db
