@@ -1,0 +1,23 @@
+services:
+  fruitbot-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # Override these in a .env file or directly here
+      - AZURE_DATABASE_URI=${AZURE_DATABASE_URI:-sqlite:///test.db}
+      - KMP_DUPLICATE_LIB_OK=TRUE
+    volumes:
+      # Mount models directory if you want to update models without rebuilding
+      - ./models:/app/models
+      # Mount .env file if you have one
+      - ./.env:/app/.env
+    restart: unless-stopped
+    networks:
+      - fruitbot-network
+
+networks:
+  fruitbot-network:
+    driver: bridge

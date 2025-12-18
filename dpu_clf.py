@@ -6,11 +6,12 @@ import base64
 from PIL import Image, ImageDraw
 import time
 from functools import wraps
+from typing import Tuple
 from stable_baselines3 import PPO
 import os
 
 import cv2
-from IPython.display import display
+# from IPython.display import display  # Not needed in production web app
 
 def timeit(func):
     """Decorator to measure function execution time."""
@@ -37,32 +38,57 @@ def load_agent(env, model_path):
         raise FileNotFoundError(f"Model file not found: {zip_path}")
     
     try:
-        model = PPO.load(model_path, env=env)
+        model = PPO.load(model_path) #, env=env)
         print(f"Successfully loaded model from {zip_path}")
         return model
     except Exception as e:
         print(f"Error loading model from {zip_path}: {e}")
         raise
 
-def image_to_base64(img):
-    """Convert numpy array image to base64 string for web display."""
-    if img is None:
-        raise ValueError("Image is None")
+def image_to_base64(img, resize=(512, 512), quality=70, format="JPEG"):
+    """Convert numpy array image to base64 string for web display.
     
+    Args:
+        img: numpy array or PIL Image
+        resize: tuple (width, height) or None to skip resizing
+        quality: JPEG quality (1-100), lower = faster but more compression. 70 is good balance.
+        format: 'JPEG' (faster) or 'PNG' (slower but lossless)
+    """
+    if img is None:
+        raise ValueError("Image is None")        
+
     # Procgen renders as RGB array (H, W, 3)
     if isinstance(img, np.ndarray):
         # Convert to PIL Image
         if img.dtype == np.float32 or img.dtype == np.float64:
             img = (img * 255).astype(np.uint8)
-        pil_img = Image.fromarray(img)
+        pil_img = Image.fromarray(img).convert('RGB')
         
-        # Convert to base64
+        # Resize if specified
+        if resize:
+            pil_img = pil_img.resize(resize)
+        
+        # Convert to base64 (JPEG is 5-10x faster than PNG)
         buffered = io.BytesIO()
-        pil_img.save(buffered, format="PNG")
+        if format == "JPEG":
+            pil_img.save(buffered, format="JPEG", quality=quality, optimize=False)
+        else:
+            pil_img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return img_str
+    elif isinstance(img, Image.Image):
+        # Handle PIL Image input
+        if resize:
+            img = img.resize(resize)
+        buffered = io.BytesIO()
+        if format == "JPEG":
+            img.save(buffered, format="JPEG", quality=quality, optimize=False)
+        else:
+            img.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode()
         return img_str
     else:
-        raise TypeError(f"Expected numpy array, got {type(img)}")
+        raise TypeError(f"Expected numpy array or PIL Image, got {type(img)}")
 
 @timeit
 def capture_agent_path(env, agent, max_steps=1000):
@@ -296,7 +322,7 @@ def analyze_fruitbot_colors(img_path: str):
 
 
     print(f"Bottom region shape: {bottom_region.shape} (y from {y_start} to {h})")
-    display(Image.fromarray(bottom_region))
+    # display(Image.fromarray(bottom_region))  # Disabled for production
 
     # Analyze colors in bottom region
     pixels = bottom_region.reshape(-1, 3)
@@ -357,7 +383,7 @@ def analyze_fruitbot_colors(img_path: str):
             palette[:, i*40:(i+1)*40, :] = bot_colors[idx]
         
         print("\nColor palette (top 20 gray/black/white colors):")
-        display(Image.fromarray(palette))
+        # display(Image.fromarray(palette))  # Disabled for production
         
         # Now detect bot using refined thresholds from actual colors
         # Get the range of gray/black/white colors actually present
@@ -435,7 +461,7 @@ def analyze_fruitbot_colors(img_path: str):
         cv2.circle(vis, (int(cx)+15, 470), 5, (255, 0, 0), -1)
         
         print("\nBot detection visualization:")
-        display(Image.fromarray(vis))
+        # display(Image.fromarray(vis))  # Disabled for production
         
         # Extract bot region and re-analyze its colors
         bot_region = bottom_region[y:y+h_box, x:x+w_box, :]
@@ -490,164 +516,326 @@ def find_x_on_row(frame: np.ndarray, target_hex: str = '#464646', row: int = 470
     xs = np.nonzero(matches)[0]
     if xs.size == 0:
         return None
-    return int(np.median(xs))
+    return int(np.min(xs))
 
 
-def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radius: int = 3) -> np.ndarray:
+def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radius: int = 5, out_color: str = 'blue', final_step: bool = False) -> np.ndarray:
     """Draw a red filled dot at (x+offset_x, y) on a copy of frame and return it. If x is None, returns a copy unchanged."""
     img = np.asarray(frame).copy()
     h, w, _ = img.shape
     if x is None:
         return img
+    offset_x = 18
     dot_x = int(np.clip(x + offset_x, 0, w - 1))
-    dot_y = int(np.clip(y, 0, h - 1))
-    pil = Image.fromarray(img)
+    dot_y = int(np.clip(y, 0, h - 1)) + 3
+
+    radius_bonus = 0
+    if final_step:
+        radius_bonus = 10
+        dot_y -= 3
+    # Convert to RGBA for transparency support
+    pil = Image.fromarray(img).convert("RGBA")
+    
+    # Draw the larger semi-transparent blue circle first (background)
+    overlay = Image.new("RGBA", pil.size, (0, 0, 0, 0))
+    ov_draw = ImageDraw.Draw(overlay)
+    big_radius = 24 + radius_bonus
+    left_b = max(dot_x - big_radius, 0)
+    top_b = max(dot_y - big_radius, 0)
+    right_b = min(dot_x + big_radius, pil.size[0] - 1)
+    bottom_b = min(dot_y + big_radius, pil.size[1] - 1)        
+    if out_color == 'red':
+        out_color = (255, 0, 0, 180)  # semi-transparent red
+    elif out_color == 'purple':
+        out_color = (128, 0, 128, 180)  # semi-transparent purple
+    else:
+        out_color = (0, 0, 255, 90)  # semi-transparent blue
+    ov_draw.ellipse((left_b, top_b, right_b, bottom_b), fill=out_color)  # semi-transparent blue
+    
+    # Composite the blue circle onto the image
+    pil = Image.alpha_composite(pil, overlay)
+    
+    # Draw the smaller orange circle on top
     draw = ImageDraw.Draw(pil)
     left = max(dot_x - radius, 0)
     top = max(dot_y - radius, 0)
     right = min(dot_x + radius, w - 1)
     bottom = min(dot_y + radius, h - 1)
-    draw.ellipse((left, top, right, bottom), fill=(255, 165, 0))
+    draw.ellipse((left, top, right, bottom), fill=(255, 165, 0, 255))  # fully opaque orange
+    
+    # Convert back to RGB
+    pil = pil.convert("RGB")
+    
     return np.array(pil)
 
 
-def record_bot_path_on_frames(
-                              frames_path: str = 'tests/frameshots/frames',
+def record_bot_path_on_image(
+                              base_image: Image.Image = None,
+                              frames_list: list = [],
+                              frames_indexes: list = [],
+                              collect_indexes: list = [],
+                              wall_collision_index: int = -1,
                               frame_start: int = 0,
                               frames_jumps: int = 3,
-                              page_steps: int = 23,
-                              bot_step: int = 7,
+                              page_steps: int = 22,
+                              bot_step: float = 7.2,
                               row: int = 470,
                               target_hex: str = '#464646',
-                              offset_x: int = 4,
-                              radius: int = 5,
-                            #   out_path: str = 'tests/frameshots/fruitbot_frame_marked.png',
-                              path_number: int = 1) -> Image.Image:
-    """Record bot path on frames and return the final annotated image."""
+                              offset_x: int = 6,
+                              radius: int = 7,
+                              path_number: int = 0,
+                              frames_in_path: int = 60,
+                              ) -> Tuple[Image.Image, int]:
+    """Record bot path on the full image and return the final annotated image."""
 
-    starting_image_path = os.path.join(frames_path, f'fruitbot_frame_{frame_start*frames_jumps}.png')
-    if not os.path.exists(starting_image_path):
-        print("There is no image in path=", starting_image_path)
+    if base_image is None:
+        print("Base image is None, cannot draw path.")
         return None
     
-    print(f'Starting image path: {starting_image_path}')
-    base_image = Image.open(starting_image_path).convert('RGB').resize((512, 512))
     base_frame = np.array(base_image)
-    for i in range(page_steps):
-        image_path = os.path.join(frames_path, f'fruitbot_frame_{frames_jumps*(i+frame_start)}.png')
-        # print(f'Processing frame: {image_path}')
-        if os.path.exists(image_path):
-            pil_img = Image.open(image_path).convert('RGB').resize((512, 512))
-        else:
-            print(f'Image not found: {image_path}, skipping.')
-            break
-        frame = np.array(pil_img)
+    last_frame = 0
+
+    # bot_cy = the bottom of the image minus some offset
+    bot_cy = base_frame.shape[0] - 45
+    for i in range(frame_start, len(frames_list)):
+        frame = frames_list[i]
+        # display(frame)
+        frame_index = frames_indexes[i]
+        # if frame_index > (path_number+1)*frames_in_path:
+        #     print(f"Reached end of path for path_number={path_number} at frame_index={frame_index}.")
+        #     break
+        last_frame = i
         cx = find_x_on_row(frame, target_hex, row=row)
-        base_frame = draw_orenge_dot(base_frame, cx, row - (bot_step*frames_jumps*i), offset_x=offset_x, radius=radius)
-    return Image.fromarray(base_frame)
+        final_step = False
+        if frame_index in collect_indexes:
+            out_color = 'purple'
+        elif frame_index == wall_collision_index:
+            out_color = 'red'
+            final_step = True
+        else:
+            out_color = 'blue'
+        base_frame = draw_orenge_dot(base_frame, cx, bot_cy, offset_x=offset_x, out_color=out_color, final_step=final_step)
+        # display(Image.fromarray(base_frame))
+        if i+1 >= len(frames_indexes):
+            print("Reached end of frames_indexes while drawing path.")
+            print(f"i={i}, len(frames_indexes)={len(frames_indexes)}")
+            jumps = 1
+        else:
+            jumps = frames_indexes[i+1] - frames_indexes[i]
+        bot_cy -= bot_step*jumps
+    result_image = Image.fromarray(base_frame)
+    
+    return result_image, last_frame
 
 
-def combine_paths(first_image_path: str, sec_image_path: str, save_path: str) -> Image.Image:
-    img1 = Image.open(first_image_path).convert('RGB')
-    img2 = Image.open(sec_image_path).convert('RGB')
 
-    w1, h1 = img1.size
-    w2, h2 = img2.size
+
+def combine_paths(first_image: Image.Image, sec_image: Image.Image) -> Image.Image:
+    """Combine two images vertically, cropping 25px from bottom of second image and 15px from top of first image."""
+    w1, h1 = first_image.size
+    w2, h2 = sec_image.size
     out_w = max(w1, w2)
-    out_h = h1 + h2 - 25  # subtract cut_px from total height
+
+    up_cut_px = 0  # pixels to remove from top of first image
+    cut_px = 157  # pixels to remove from bottom of second image
+    
+    # Crop bottom of second image
+    img2_cropped = sec_image.crop((0, 0, w2, max(0, h2 - cut_px)))
+    
+    # Crop top of first image
+    img1_cropped = first_image.crop((0, up_cut_px, w1, h1))
+    
+    out_h = img1_cropped.height + img2_cropped.height
 
     combined = Image.new('RGB', (out_w, out_h), (0, 0, 0))
 
-    cut_px = 25  # pixels to remove from bottom of second image
-    w2, h2 = img2.size
-    img2_cropped = img2.crop((0, 0, w2, max(0, h2 - cut_px)))
-
     # center horizontally when pasting
     combined.paste(img2_cropped, ((out_w - w2) // 2, 0))      # sec_image on top
-    combined.paste(img1, ((out_w - w1) // 2, img2_cropped.height))     # first image below
-    combined.save(save_path)
-    print(f"Saved combined image to {save_path}")
+    combined.paste(img1_cropped, ((out_w - w1) // 2, img2_cropped.height))     # first image below
+    
     return combined
 
 
-def draw_full_path(frames_path: str, out_path: str):
-    frames_num = len([f for f in os.listdir(frames_path) if f.startswith('fruitbot_frame_') and f.endswith('.png')])
-    print(f"found {frames_num} files in folder")
-    first_frame = 0
-    path_num = 1
-    while first_frame < frames_num:
-        image = record_bot_path_on_frames(
-            frames_path=frames_path,
-            frame_start=first_frame,
-            frames_jumps=3,
-            page_steps=23,
-            bot_step=7,
+def draw_full_path(frames_list: list = [], frames_indexes: list = [], collect_indexes: list = [], frames_jumps: int = 3, wall_collision_index: int = -1) -> Tuple[Image.Image, Image.Image]:
+    """Draw full path across all frames and return the combined image."""
+    path_length = 50
+
+    if frames_list is None:
+        raise ValueError("Either frames_list or frames_path must be provided.")
+
+                
+    print(f"using frames list with {len(frames_list)} frames")
+
+    base_frames = []
+    
+    for i in range(len(frames_list)):
+        frame_index = frames_indexes[i]
+        if frame_index % path_length == 0:
+            base_frames.append(frames_list[i])
+
+    print(f"base_frames length: {len(base_frames)}")
+    combined_image_clean = base_frames[0]
+    
+    for i in range(1, len(base_frames)):
+            combined_image_clean = combine_paths(combined_image_clean, base_frames[i])
+    
+
+    image, _ = record_bot_path_on_image(
+            base_image = combined_image_clean,
+            frames_list=frames_list,
+            frames_indexes=frames_indexes,
+            collect_indexes=collect_indexes,
+            wall_collision_index=wall_collision_index,
+            frame_start=0,
+            frames_jumps=frames_jumps,
+            page_steps=22, #path_length//frames_jumps,
             row=470,
             target_hex='#464646',
-            offset_x=4,
-            radius=5
+            offset_x=12,
+            radius=5,
+            path_number=0,
+            frames_in_path=path_length,
         )
-        # display(image)
-        if image is None:
-            break
-        image.save(out_path+f'/fruitbot_path_{path_num}.png')
-        path_num += 1
-        first_frame += 23
-    print(f"finish with {path_num-1} paths")
 
-    if path_num<=2:
-        combine_image = Image.open(out_path+f'/fruitbot_path_1.png')
-        combine_image.save(out_path+'/fruitbot_full_path_combined.png')
-        return
-
-    combine_paths(
-        first_image_path=out_path+'/fruitbot_path_1.png',
-        sec_image_path=out_path+'/fruitbot_path_2.png',
-        save_path=out_path+'/fruitbot_full_path_combined.png'
-    )
-
-    next_path = 3
-    while(next_path)<path_num:
-        combine_paths(
-            first_image_path=out_path+'/fruitbot_full_path_combined.png',
-            sec_image_path=out_path+f'/fruitbot_path_{next_path}.png',
-            save_path=out_path+'/fruitbot_full_path_combined.png'
-        )
-        next_path +=1
-
-
-def compare_models(env1, env2, model1_path: str, model2_path: str, save_path: str):
-    model1 = PPO.load(model1_path)
-    model2 = PPO.load(model2_path)
-
-    frames_path1 = save_path + '/model1_frames'
-    frames_path2 = save_path + '/model2_frames'
-    os.makedirs(frames_path1, exist_ok=True)
-    os.makedirs(frames_path2, exist_ok=True)
-
-    # Record frames for model 1
-    def record_frames(env, model, frames_path):
-        obs = env.reset()
-        done = False
-        step = 0
-        while not done:
-            action, _ = model.predict(obs, deterministic=True)
-            action = action.item() if hasattr(action, 'item') else int(action)
-            obs, reward, done, info = env.step(action)
-            frame = env.render()
-            img = Image.fromarray(frame).convert('RGB').resize((512, 512))
-            img.save(os.path.join(frames_path, f'fruitbot_frame_{step}.png'))
-            step += 1
+    # first_frame = 0
+    # path_num = 0
+    # path_images = []
+    # last_frame = 0
     
-    record_frames(env1, model1, frames_path1)
-    record_frames(env2, model2, frames_path2)
+    # while last_frame < len(frames_list) - 1:
+    #     image, last_frame = record_bot_path_on_image(
+    #         # base_image=frames_list[first_frame] if len(frames_list) > first_frame else None,
+    #         frames_list=frames_list,
+    #         frames_indexes=frames_indexes,
+    #         collect_indexes=collect_indexes,
+    #         wall_collision_index=wall_collision_index,
+    #         frame_start=last_frame,
+    #         frames_jumps=frames_jumps,
+    #         page_steps=22, #path_length//frames_jumps,
+    #         row=470,
+    #         target_hex='#464646',
+    #         offset_x=12,
+    #         radius=5,
+    #         path_number=path_num,
+    #         frames_in_path=path_length,
+    #     )
+    #     print(f"Completed path number {path_num}, last_frame={last_frame}")
+    #     path_num += 1
+    #     # last_frame += 1
+        
+    #     if image is None:
+    #         break
+        
+    #     path_images.append(image)
+    #     first_frame += path_length // frames_jumps
+    
 
+    # if len(path_images) == 0:
+    #     return None
+    
+    # if len(path_images) == 1:
+    #     combined_image = path_images[0]
+    # else:
+    #     # Combine all path images
+    #     combined_image = path_images[0] # combine_paths(path_images[0], path_images[1], save_to_file=False, save_path='')
+        
+    #     for i in range(1, len(path_images)):
+    #         combined_image = combine_paths(combined_image, path_images[i])
+    
+    return image, combined_image_clean
+
+def record_frames(env, model: PPO, frames_jumps: int = 5):# -> List[Image.Image], List[int], int:
+    frames = []
+    frames_indexes = []
+    collect_indexes = []
+    wall_collision_index = -1
+    frames_in_path = 60
+    obs = env.reset()
+    if isinstance(obs, tuple):
+        obs = obs[0]
+    done = False
+    step_index = 0
+    while True:
+        action, _ = model.predict(obs, deterministic=True)
+        action = action.item() if hasattr(action, 'item') else int(action)
+        
+        # Step environment
+        result = env.step(action)
+        if len(result) == 5:
+            obs, reward, terminated, truncated, info = result
+            done = terminated or truncated
+        else:
+            obs, reward, done, info = result
+        if done:
+            # save the last frame again
+            img = frames[-1]
+            frames.append(img)
+            frames_indexes.append(step_index)
+            if reward < 0:
+                wall_collision_index = step_index
+            break
+
+        save_frame = False
+        if abs(reward) > 0:
+            if reward < 0 and done:
+                wall_collision_index = step_index
+            collect_indexes.append(step_index)
+            save_frame = True
+
+        if action == 0 or action == 2:  # Left or Right
+            save_frame = True
+
+        if save_frame or step_index % frames_jumps == 0 or step_index % frames_in_path == 0:
+            # Get frame from info['rgb'] instead of render()
+            frame = info.get('rgb', None)
+            if frame is None:
+                print(f"Warning: 'rgb' not in info at step {step_index}, using observation")
+                frame = obs
+            
+            img = Image.fromarray(frame).convert('RGB').resize((512, 512))
+            frames.append(img)
+            frames_indexes.append(step_index)
+        step_index += 1
+        
+    return frames, frames_indexes, collect_indexes, wall_collision_index
+
+def compare_models(env1, env2, model1: PPO, model2: PPO, save_to_file: bool = False, save_path: str = ''):
+    """Compare two models by recording their frames and generating path visualizations.
+    
+    Returns:
+        tuple: (model1_path_image, model2_path_image) - PIL Images of the full paths
+    """
+
+    if save_to_file and save_path:
+        frames_path1 = os.path.join(save_path, 'model1/frames')
+        frames_path2 = os.path.join(save_path, 'model2/frames')
+        os.makedirs(frames_path1, exist_ok=True)
+        os.makedirs(frames_path2, exist_ok=True)
+    else:
+        # Use temp directories if not saving
+        import tempfile
+        temp_dir = tempfile.mkdtemp()
+        frames_path1 = os.path.join(temp_dir, 'model1/frames')
+        frames_path2 = os.path.join(temp_dir, 'model2/frames')
+        os.makedirs(frames_path1, exist_ok=True)
+        os.makedirs(frames_path2, exist_ok=True)
+
+    frames_jumps = 2
+    # Record frames for both models
+    frames_list1, frames_indexes1, collect_indexes1, wall_collision_index1 = record_frames(env1, model1, frames_jumps=frames_jumps)
+    frames_list2, frames_indexes2, collect_indexes2, wall_collision_index2 = record_frames(env2, model2, frames_jumps=frames_jumps)
 
     # Draw full paths
-    out_path1 = save_path + '/model1_path'
-    out_path2 = save_path + '/model2_path'
-    os.makedirs(out_path1, exist_ok=True)
-    os.makedirs(out_path2, exist_ok=True)
+    if save_to_file and save_path:
+        out_path1 = os.path.join(save_path, 'model1')
+        out_path2 = os.path.join(save_path, 'model2')
+        os.makedirs(out_path1, exist_ok=True)
+        os.makedirs(out_path2, exist_ok=True)
+    else:
+        out_path1 = ''
+        out_path2 = ''
 
-    draw_full_path(frames_path1, out_path1)
-    draw_full_path(frames_path2, out_path2)
+    model1_path_image = draw_full_path(frames_list=frames_list1, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index1)
+    model2_path_image = draw_full_path(frames_list=frames_list2, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index2)
+    
+    return model1_path_image, model2_path_image

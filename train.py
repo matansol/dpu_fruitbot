@@ -2,13 +2,14 @@
 """
 Train a PPO agent on a selected Procgen environment and save checkpoints.
 
-- Uses stable-baselines3.PPO with CnnPolicy (image observations)
+- Uses stable-baselines3.PPO with IMPALA-CNN (default) or CnnPolicy
 - Accepts common training hyperparameters
 - Saves under models/<env_name>/<timestamp>/
 
 Examples:
     python train.py --env fruitbot --total-steps 2000000 --n-envs 8 --device auto
     python train.py --env coinrun  --total-steps 1000000 --learning-rate 2.5e-4 --seed 0
+    python train.py --env fruitbot --use-impala --impala-depths 16 32 32 --impala-embedding 256
 
 Notes:
 - This repo registers Gym environments on import (procgen:procgen-<env>-v0).
@@ -75,7 +76,7 @@ def make_env_fn(
     env_id: str,
     render_mode: Optional[str] = None,
     use_gymnasium: bool = False,
-    use_source: bool = False,  # Changed default to False - no need to build from source
+    use_source: bool = False,
     **kwargs,
 ):
     """Return a thunk that creates a single env instance when called.
@@ -86,10 +87,8 @@ def make_env_fn(
     For normal training, use_source=False (default) is recommended.
     """
     def _thunk():
-        # Standard path: use gym.make registry (no rebuild needed)
         env = None
         
-        # Only use source build if explicitly requested
         if use_source and pg_make_env is not None:
             try:
                 env = pg_make_env(render_mode=render_mode, **kwargs)
@@ -97,7 +96,6 @@ def make_env_fn(
                 env = None
 
         if env is None:
-            # Standard path: create via gymnasium or gym
             if env_id.startswith("procgen:") and gym is not None:
                 env = gym.make(env_id, render_mode=render_mode, **kwargs)
                 if 'render_mode' not in getattr(env, 'metadata', {}):
@@ -105,16 +103,50 @@ def make_env_fn(
                         env.render_mode = render_mode
                     except Exception:
                         pass
-            else:
-                lib = gymn if use_gymnasium and gymn is not None else gym
-                if lib is None:
-                    raise RuntimeError("No Gym/Gymnasium available to create the environment.")
-                env = lib.make(env_id, render_mode=render_mode, **kwargs)
-
-        # Wrappers are now applied in gym_registration.py before Gym conversion
-        # No need to apply them here
         
         env = Monitor(env)
+        
+        # Add seed compatibility wrapper
+        original_seed_method = getattr(env, 'seed', None)
+        
+        def seed_wrapper(seed=None):
+            """Wrapper that handles seed() calls with or without arguments"""
+            if seed is None:
+                # No seed provided - call original if it exists
+                if original_seed_method is not None:
+                    try:
+                        return original_seed_method()
+                    except TypeError:
+                        # Original seed() doesn't accept arguments, just call it
+                        return original_seed_method()
+                return [0]
+            
+            # Seed provided - try multiple approaches
+            # 1. Try new gym API: reset(seed=seed)
+            try:
+                env.reset(seed=seed)
+                return [seed]
+            except TypeError:
+                # 2. Try old gym API: seed(seed)
+                if original_seed_method is not None:
+                    try:
+                        result = original_seed_method(seed)
+                        return result if result is not None else [seed]
+                    except TypeError:
+                        # seed() method exists but doesn't accept arguments
+                        try:
+                            original_seed_method()
+                            return [seed]
+                        except:
+                            return [seed]
+                return [seed]
+            except Exception:
+                # Fallback - just return seed
+                return [seed]
+        
+        # Replace seed method
+        env.seed = seed_wrapper
+        
         return env
 
     return _thunk
@@ -124,19 +156,19 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train PPO on Procgen")
     p.add_argument("--env", default="fruitbot", help="Procgen env name, e.g., fruitbot, coinrun, jumper")
     p.add_argument("--total-steps", type=int, default=1_000_000, help="Total training timesteps")
-    p.add_argument("--n-envs", type=int, default=8, help="Number of parallel envs (use 1 on low-end/Windows if needed)")
+    p.add_argument("--n-envs", type=int, default=32, help="Number of parallel envs (use 1 on low-end/Windows if needed)")
     p.add_argument("--n-steps", type=int, default=256, help="PPO n_steps")
-    p.add_argument("--batch-size", type=int, default=1024, help="PPO batch_size")
+    p.add_argument("--batch-size", type=int, default=256, help="PPO batch_size")
     p.add_argument("--learning-rate", type=float, default=1e-3, help="PPO learning rate")
     p.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     p.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
-    p.add_argument("--clip-range", type=float, default=0.2, help="Policy clip range")
+    p.add_argument("--clip-range", type=float, default=0.3, help="Policy clip range")
     p.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient")
     p.add_argument("--vf-coef", type=float, default=0.5, help="Value function coefficient")
     p.add_argument("--max-grad-norm", type=float, default=0.5, help="Gradient clipping")
     p.add_argument("--seed", type=int, default=0, help="Random seed")
     p.add_argument("--device", type=str, default="auto", help="PyTorch device: auto/cpu/cuda")
-    p.add_argument("--save-freq", type=int, default=100_000, help="Checkpoint save frequency (timesteps)")
+    p.add_argument("--save-freq", type=int, default=200_000, help="Checkpoint save frequency (timesteps)")
     p.add_argument("--save-model", type=str, default=None, help="Path to checkpoint to resume training from (e.g., models/fruitbot/20240115-120000/ppo_1000000_steps.zip)")
     p.add_argument("--use-gymnasium", action="store_true", default=False, help="Use gymnasium instead of gym if available")
     p.add_argument("--use-source", action="store_true", default=False, help="Build envs from procgen source (only needed for C++ development)")
@@ -158,17 +190,14 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Rebuild from source if --use-source is specified
     if args.use_source:
         print("Building procgen environment from source...")
         from procgen.builder import build
-        build(debug=False)  # Set debug=True if you want debug symbols
+        build(debug=False)
         print("Build complete.")
 
-    # Resolve env id registered by procgen on gym import
     env_id = f"procgen-{args.env}-v0"
 
-    # Reproducibility
     np.random.seed(args.seed)
     try:
         import torch
@@ -176,13 +205,11 @@ def main():
     except Exception:
         pass
 
-    # Directory for saving models
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     save_root = Path("models") / args.env
     save_dir = save_root / f"{timestamp}_{args.distribution_mode}"
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build vectorized envs
     env_kwargs = dict(
         env_name=args.env,
         distribution_mode=args.distribution_mode,
@@ -191,7 +218,6 @@ def main():
         use_sequential_levels=args.use_sequential_levels,
     )
     
-    # Add FruitBot custom rewards if training FruitBot
     if args.env == "fruitbot":
         env_kwargs["fruitbot_reward_completion"] = args.fruitbot_reward_completion
         env_kwargs["fruitbot_reward_positive"] = args.fruitbot_reward_positive
@@ -201,6 +227,15 @@ def main():
         env_kwargs["use_discrete_action_wrapper"] = True
         env_kwargs["use_stay_bonus_wrapper"] = True
         env_kwargs["stay_bonus"] = 0.1
+        env_kwargs['fruitbot_num_walls'] = 5
+        env_kwargs['fruitbot_num_good_min'] = 7
+        env_kwargs['fruitbot_num_good_range'] = 1
+        env_kwargs['fruitbot_num_bad_min'] = 7
+        env_kwargs['fruitbot_num_bad_range'] = 1
+        env_kwargs['fruitbot_wall_gap_pct'] = 50
+        env_kwargs['fruitbot_door_prob_pct'] = 0
+        env_kwargs['food_diversity'] = 2
+
         print(f"\nFruitBot Reward Configuration:")
         print(f"  Completion bonus: {args.fruitbot_reward_completion}")
         print(f"  Good fruit reward: {args.fruitbot_reward_positive}")
@@ -209,7 +244,6 @@ def main():
         print(f"  Step reward: {args.fruitbot_reward_step}")
         print()
 
-    # On Windows, SubprocVecEnv can be heavier; default to DummyVecEnv unless n_envs is large
     use_subproc = args.n_envs > 1 and os.name != "nt"
     make_thunk = make_env_fn(
         env_id,
@@ -230,9 +264,15 @@ def main():
     if args.frame_stack and args.frame_stack > 1:
         venv = VecFrameStack(venv, n_stack=args.frame_stack, channels_order="last")
 
-    # PPO with CNN policy for image observations
+    # Import IMPALA model
+    from common.model import ImpalaModel
+    
+    print(f"\n{'='*60}")
+    print(f"Using IMPALA-CNN Architecture (depths=[16,32,32], embedding=256)")
+    print(f"{'='*60}\n")
+    
+    # Load model - now the seed wrapper is already in place
     if args.save_model:
-        # Load existing model and continue training
         checkpoint_path = Path(args.save_model)
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
@@ -245,9 +285,8 @@ def main():
         )
         print(f"Successfully loaded model. Continuing training...")
     else:
-        # Create new model from scratch
         model = PPO(
-            policy="CnnPolicy",
+            policy=ImpalaModel,
             env=venv,
             learning_rate=args.learning_rate,
             n_steps=args.n_steps,
@@ -263,9 +302,8 @@ def main():
             verbose=1,
         )
 
-    # Checkpointing callback
     checkpoint_cb = CheckpointCallback(
-        save_freq=args.save_freq // max(1, args.n_envs),  # adjust for vec env steps
+        save_freq=args.save_freq // max(1, args.n_envs),
         save_path=str(save_dir),
         save_vecnormalize=False,
         save_replay_buffer=False,
@@ -274,7 +312,6 @@ def main():
 
     model.learn(total_timesteps=args.total_steps, progress_bar=True, callback=checkpoint_cb)
 
-    # Save final model
     final_path = save_dir / "ppo_final"
     model.save(str(final_path))
     print(f"Training complete. Saved checkpoints in: {save_dir}")

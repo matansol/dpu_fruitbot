@@ -64,6 +64,16 @@ struct GameOptions {
     float fruitbot_reward_negative = -2.0f;
     float fruitbot_reward_wall_hit = 0.0f;
     float fruitbot_reward_step = 0.0f;
+    
+    // FruitBot layout parameters
+    int fruitbot_num_walls = -1;  // -1 means use default
+    int fruitbot_num_good_min = 10;
+    int fruitbot_num_good_range = 10;
+    int fruitbot_num_bad_min = 10;
+    int fruitbot_num_bad_range = 10;
+    int fruitbot_wall_gap_pct = -1;
+    int fruitbot_door_prob_pct = -1;  
+    int food_diversity = 4;
 };
 
 class Game {

@@ -1,4 +1,3 @@
-
 #include "game.h"
 #include "vecoptions.h"
 
@@ -99,6 +98,15 @@ void Game::parse_options(std::string name, VecOptions opts) {
                   << " wall_hit=" << options.fruitbot_reward_wall_hit
                   << " step=" << options.fruitbot_reward_step << std::endl;
 
+        // FruitBot layout parameters
+        opts.consume_int("fruitbot_num_walls", &options.fruitbot_num_walls);
+        opts.consume_int("fruitbot_num_good_min", &options.fruitbot_num_good_min);
+        opts.consume_int("fruitbot_num_good_range", &options.fruitbot_num_good_range);
+        opts.consume_int("fruitbot_num_bad_min", &options.fruitbot_num_bad_min);
+        opts.consume_int("fruitbot_num_bad_range", &options.fruitbot_num_bad_range);
+        opts.consume_int("fruitbot_wall_gap_pct", &options.fruitbot_wall_gap_pct);
+        opts.consume_int("fruitbot_door_prob_pct", &options.fruitbot_door_prob_pct);
+        opts.consume_int("food_diversity", &options.food_diversity);
     }
 
     opts.ensure_empty();
@@ -125,22 +133,19 @@ void Game::reset() {
 
     if (episodes_remaining == 0) {
         if (options.use_sequential_levels && step_data.level_complete) {
-            // prevent overflow in seed sequences
+            // Sequential: deterministic increment
             current_level_seed = (int32_t)(current_level_seed + 997);
         } else {
+            // DEFAULT BEHAVIOR: Generate NEW random seed each reset
             current_level_seed = level_seed_rand_gen.randint(level_seed_low, level_seed_high);
         }
-
         episodes_remaining = 1;
-    } else {
-        step_data.reward = 0;
-        step_data.done = false;
-        step_data.level_complete = false;
     }
 
+    // Seed the game RNG with the NEW current_level_seed
     rand_gen.seed(current_level_seed);
-    game_reset();
-
+    game_reset();  // Uses rand_gen for all randomness
+    
     cur_time = 0;
     total_reward = 0;
     episodes_remaining -= 1;

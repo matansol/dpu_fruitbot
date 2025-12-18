@@ -172,6 +172,9 @@ def build(package=False, debug=False):
     if debug:
         build_type = "debug"
 
+    # Ensure the build directory exists before trying to chdir into it
+    os.makedirs(build_dir, exist_ok=True)
+
     with chdir(build_dir), global_build_lock:
         # check if we have built yet in this process
         if build_type not in global_builds:

@@ -48,6 +48,7 @@ venv.bak/
 
 # Database
 *.db
+test_db_connection.py
 *.sqlite
 *.sqlite3
 test.db

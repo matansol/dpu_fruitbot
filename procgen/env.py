@@ -225,6 +225,15 @@ class ProcgenGym3Env(BaseProcgenEnv):
         fruitbot_reward_negative=-1.0,
         fruitbot_reward_wall_hit=-2.0,
         fruitbot_reward_step=0.0,
+        # FruitBot layout parameters
+        fruitbot_num_walls=5,
+        fruitbot_num_good_min=10,
+        fruitbot_num_good_range=10,
+        fruitbot_num_bad_min=10,
+        fruitbot_num_bad_range=10,
+        fruitbot_wall_gap_pct=40,
+        fruitbot_door_prob_pct=0,
+        food_diversity=4,
         **kwargs,
     ):
         assert (
@@ -261,6 +270,16 @@ class ProcgenGym3Env(BaseProcgenEnv):
             options["fruitbot_reward_negative_x100"] = int(fruitbot_reward_negative * 100)
             options["fruitbot_reward_wall_hit_x100"] = int(fruitbot_reward_wall_hit * 100)
             options["fruitbot_reward_step_x100"] = int(fruitbot_reward_step * 100)
+            
+            # Add FruitBot layout parameters
+            options["fruitbot_num_walls"] = fruitbot_num_walls
+            options["fruitbot_num_good_min"] = fruitbot_num_good_min
+            options["fruitbot_num_good_range"] = fruitbot_num_good_range
+            options["fruitbot_num_bad_min"] = fruitbot_num_bad_min
+            options["fruitbot_num_bad_range"] = fruitbot_num_bad_range
+            options["fruitbot_wall_gap_pct"] = fruitbot_wall_gap_pct
+            options["fruitbot_door_prob_pct"] = fruitbot_door_prob_pct
+            options["food_diversity"] = food_diversity  # default food diversity level
         
         super().__init__(num, env_name, options, **kwargs)
         

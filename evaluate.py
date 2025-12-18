@@ -29,37 +29,6 @@ from stable_baselines3 import PPO
 import procgen  # noqa: F401 - Required for procgen environment registration (uses pre-built binaries)
 
 
-def make_eval_env(env_name: str, render_mode: Optional[str] = None, **kwargs) -> gym.Env:
-    """
-    Create a single Procgen environment for evaluation using pre-built binaries.
-    
-    Note: This function uses the already-compiled procgen package. No rebuilding occurs.
-    The procgen environments are registered when you import procgen above.
-    
-    Args:
-        env_name: Name of the Procgen game (e.g., 'fruitbot')
-        render_mode: 'human' for window rendering, 'rgb_array' for video, None for no rendering
-        **kwargs: Additional environment arguments (distribution_mode, num_levels, etc.)
-    
-    Returns:
-        Configured Procgen environment
-    """
-    env_id = f"procgen-{env_name}-v0"
-    
-    # Create the environment using gym.make
-    env = gym.make(
-        env_id,
-        render_mode=render_mode,
-        **kwargs
-    )
-    
-    # Apply the FruitBot-specific wrappers if applicable
-    if env_name == "fruitbot":
-        env = make_fruitbot_basic(env)
-    
-    return env
-
-
 def evaluate_agent(
     model: PPO,
     env: gym.Env,
@@ -91,6 +60,16 @@ def evaluate_agent(
         dict with evaluation statistics (includes new event counts)
     """
     
+    # Import rendering utilities only if needed
+    if render:
+        try:
+            import cv2
+            has_cv2 = True
+        except ImportError:
+            has_cv2 = False
+            print("Warning: cv2 not available, rendering will be disabled")
+            render = False
+    
     episode_rewards = []
     episode_lengths = []
     completion_count = 0
@@ -114,10 +93,6 @@ def evaluate_agent(
         ep_wall = 0
 
         while not (done or truncated):
-            if render:
-                env.render()
-                time.sleep(delay)
-
             action, _states = model.predict(obs, deterministic=True)
             result = env.step(action)
 
@@ -127,6 +102,16 @@ def evaluate_agent(
                 truncated = False
             else:
                 obs, reward, done, truncated, info = result
+
+            # Render if requested - extract RGB from info
+            if render and has_cv2 and 'rgb' in info:
+                rgb = info['rgb']
+                # Convert RGB to BGR for cv2 display
+                bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                cv2.imshow('Procgen Evaluation', bgr)
+                cv2.waitKey(1)
+                if delay > 0 and steps % 2 == 0:
+                    time.sleep(delay)
 
             # Ensure reward is a scalar float (if it's array-like)
             try:
@@ -138,8 +123,6 @@ def evaluate_agent(
             total_reward += r
             steps += 1
             TOL = 1e-3
-
-            # print(r)
 
             # Compare reward to configured event rewards (with tolerance)
             if np.isclose(r, fruitbot_reward_positive, atol=TOL, rtol=0.0):
@@ -158,6 +141,10 @@ def evaluate_agent(
 
         print(f"Episode {ep+1}/{num_episodes}: Reward={total_reward:.2f}, Steps={steps}, Good={ep_good}, Bad={ep_bad}, WallHits={ep_wall}")
 
+    # Clean up rendering window
+    if render and has_cv2:
+        cv2.destroyAllWindows()
+
     stats = {
         'mean_reward': np.mean(episode_rewards),
         'std_reward': np.std(episode_rewards),
@@ -174,6 +161,111 @@ def evaluate_agent(
 
     return stats
 
+import torch
+
+def evaluate_agent_fast(
+    model: PPO,
+    env_id: str,
+    env_kwargs: dict,
+    num_episodes: int = 100,
+    num_parallel: int = 16,  # Evaluate 16 episodes in parallel
+    fruitbot_reward_positive: float = 2.0,
+    fruitbot_reward_negative: float = -1.0,
+    fruitbot_reward_wall_hit: float = -2.0,
+) -> Dict[str, Any]:
+    """
+    Fast parallel evaluation using vectorized environments.
+    
+    This runs multiple episodes simultaneously for much faster evaluation.
+    """
+    from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+    import procgen
+    
+    # Create vectorized environment
+    def make_env():
+        return gym.make(env_id, **env_kwargs)
+    
+    # Use SubprocVecEnv for true parallelism (each env in separate process)
+    # Or DummyVecEnv for single-process (faster for simple envs)
+    vec_env = DummyVecEnv([make_env for _ in range(num_parallel)])
+    
+    episode_rewards = []
+    episode_lengths = []
+    episode_good_food = []
+    episode_bad_food = []
+    episode_wall_hits = []
+    
+    # Track per-env stats
+    current_rewards = [0.0] * num_parallel
+    current_lengths = [0] * num_parallel
+    current_good = [0] * num_parallel
+    current_bad = [0] * num_parallel
+    current_wall = [0] * num_parallel
+    
+    obs = vec_env.reset()
+    episodes_done = 0
+    
+    # Set model to eval mode
+    if hasattr(model.policy, 'eval'):
+        model.policy.eval()
+    
+    # Disable gradient computation for inference
+    with torch.no_grad():
+        while episodes_done < num_episodes:
+            # Predict actions for all environments at once
+            actions, _ = model.predict(obs, deterministic=True)
+            obs, rewards, dones, infos = vec_env.step(actions)
+            
+            # Update stats for each parallel environment
+            for i in range(num_parallel):
+                r = float(rewards[i])
+                current_rewards[i] += r
+                current_lengths[i] += 1
+                
+                TOL = 1e-3
+                if np.isclose(r, fruitbot_reward_positive, atol=TOL, rtol=0.0):
+                    current_good[i] += 1
+                elif np.isclose(r, fruitbot_reward_negative, atol=TOL, rtol=0.0):
+                    current_bad[i] += 1
+                elif np.isclose(r, fruitbot_reward_wall_hit, atol=TOL, rtol=0.0):
+                    current_wall[i] += 1
+                
+                if dones[i] and episodes_done < num_episodes:
+                    # Episode finished
+                    episode_rewards.append(current_rewards[i])
+                    episode_lengths.append(current_lengths[i])
+                    episode_good_food.append(current_good[i])
+                    episode_bad_food.append(current_bad[i])
+                    episode_wall_hits.append(current_wall[i])
+                    
+                    # Reset counters
+                    current_rewards[i] = 0.0
+                    current_lengths[i] = 0
+                    current_good[i] = 0
+                    current_bad[i] = 0
+                    current_wall[i] = 0
+                    
+                    episodes_done += 1
+                    if episodes_done % 10 == 0:
+                        print(f"Progress: {episodes_done}/{num_episodes} episodes completed")
+    
+    vec_env.close()
+    
+    stats = {
+        'mean_reward': np.mean(episode_rewards),
+        'std_reward': np.std(episode_rewards),
+        'min_reward': np.min(episode_rewards),
+        'max_reward': np.max(episode_rewards),
+        'mean_length': np.mean(episode_lengths),
+        'completion_rate': 0.0,  # Not tracked in fast mode
+        'total_episodes': num_episodes,
+        'avg_good_food': np.mean(episode_good_food),
+        'avg_bad_food': np.mean(episode_bad_food),
+        'avg_wall_hits': np.mean(episode_wall_hits),
+    }
+    
+    return stats
+
 # best model so far - models\fruitbot\20251124-155020_easy\ppo_final.zip
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate trained PPO agent on Procgen")
@@ -185,6 +277,7 @@ def main() -> None:
     parser.add_argument("--distribution-mode", type=str, default="hard", choices=["easy", "hard", "extreme", "memory", "exploration"])
     parser.add_argument("--num-levels", type=int, default=0, help="Number of levels (0 = unlimited)")
     parser.add_argument("--start-level", type=int, default=0, help="Start level seed")
+    parser.add_argument("--compile", action="store_true", help="Compile the Procgen environment from source")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     # FruitBot custom reward shaping
     parser.add_argument("--fruitbot-reward-completion", type=float, default=10.0, help="FruitBot: reward for reaching the goal")
@@ -192,6 +285,8 @@ def main() -> None:
     parser.add_argument("--fruitbot-reward-negative", type=float, default=-1.0, help="FruitBot: penalty for touching bad food")
     parser.add_argument("--fruitbot-reward-wall-hit", type=float, default=-2.0, help="FruitBot: penalty for hitting walls/doors")
     parser.add_argument("--fruitbot-reward-step", type=float, default=0.0, help="FruitBot: small reward for each step (encourages survival)")
+    parser.add_argument("--fast", action="store_true", help="Use fast parallel evaluation (no rendering)")
+    parser.add_argument("--num-parallel", type=int, default=16, help="Number of parallel environments for fast evaluation")
 
     
     args = parser.parse_args()
@@ -222,15 +317,10 @@ def main() -> None:
     if model_path_str.endswith('.zip'):
         model_path_str = model_path_str[:-4]
     
-    try:
-        model = PPO.load(model_path_str)
-        print("Model loaded successfully!")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        if "unsupported pickle protocol: 5" in str(e):
-            print("Hint: The model uses pickle protocol 5 (Python 3.8+). Please update your environment to Python 3.8.")
-        return
-    
+    model = PPO.load(model_path_str)
+    print("Model loaded successfully!")
+    print(f"Model policy: {type(model.policy)}")
+    print(f"Model action space: {model.action_space}")
     # Create environment - just use gym.make, no need to build from source
     env_kwargs = {
         "distribution_mode": args.distribution_mode,
@@ -242,49 +332,136 @@ def main() -> None:
     env_kwargs["fruitbot_reward_negative"] = args.fruitbot_reward_negative
     env_kwargs["fruitbot_reward_wall_hit"] = args.fruitbot_reward_wall_hit
     env_kwargs["fruitbot_reward_step"] = args.fruitbot_reward_step
+    
+    # REMOVED: These are not valid env kwargs - they should be wrappers applied after creation
     env_kwargs["use_discrete_action_wrapper"] = True
-    env_kwargs["use_stay_bonus_wrapper"] = True
+    env_kwargs["use_stay_bonus_wrapper"] = False
     env_kwargs["stay_bonus"] = 0
     
-    render_mode = "human" if args.render else None
-    env_id = f"procgen-{args.env}-v0"
-    env = gym.make(env_id, render_mode=render_mode, **env_kwargs)
-    # env = make_eval_env(args.env, render_mode=render_mode, **env_kwargs)
+    # environment structuring
+    env_kwargs['fruitbot_num_walls'] = 4
+    env_kwargs['fruitbot_num_good_min'] = 4
+    env_kwargs['fruitbot_num_good_range'] = 1
+    env_kwargs['fruitbot_num_bad_min'] = 4
+    env_kwargs['fruitbot_num_bad_range'] = 1
+    env_kwargs['fruitbot_wall_gap_pct'] = 60
+    env_kwargs['fruitbot_door_prob_pct'] = 0
+    env_kwargs['food_diversity'] = 2
+
+    if args.compile:
+        print("Compiling Procgen environment from source...")
+        try:
+            from procgen.builder import build
+            build()
+            print("Compilation complete!")
+        except Exception as e:
+            print(f"Compilation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+
+    # Create environment with proper error handling
+    print("\nCreating environment...")
+    print(f"Environment ID: procgen-{args.env}-v0")
+    print(f"Render mode: {'human' if args.render else 'None'}")
+
+    
+    try:
+        render_mode = None  # Don't use render_mode, we'll handle rendering manually
+        env_id = f"procgen-{args.env}-v0"
+        
+        # Create base environment
+        env = gym.make(env_id, render_mode=render_mode, **env_kwargs)
+        
+        print("✓ Base environment created successfully!")
+        
+        # Apply custom wrappers if needed (these are not standard Procgen kwargs)
+        # If you have custom wrappers, apply them here:
+        # from procgen.wrappers import DiscreteActionWrapper  # example
+        # env = DiscreteActionWrapper(env)
+        
+    except Exception as e:
+        print(f"\n❌ Error creating environment: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+    
+    # Test environment reset
+    print("\nTesting environment reset...")
+    try:
+        obs = env.reset()
+        if isinstance(obs, tuple):
+            obs, info = obs
+            print(f"Reset successful! Obs shape: {obs.shape}, Info keys: {list(info.keys())}")
+        else:
+            print(f"Reset successful! Obs shape: {obs.shape}")
+    except Exception as e:
+        print(f"\n❌ Error resetting environment: {e}")
+        import traceback
+        traceback.print_exc()
+        env.close()
+        return
     
     if args.seed is not None:
+        print(f"\nSetting seed: {args.seed}")
         try:
             env.reset(seed=args.seed)
         except TypeError:
             # Old gym API doesn't accept seed in reset
             if hasattr(env, 'seed'):
                 env.seed(args.seed)
+                env.reset()
     
-    print(f"\nEvaluating on {args.env} ({args.distribution_mode} mode)")
+    print(f"\n{'='*60}")
+    print(f"Starting evaluation on {args.env} ({args.distribution_mode} mode)")
     print(f"Episodes: {args.episodes}")
-    print("-" * 60)
-    
-    # Run evaluation
-    stats = evaluate_agent(model, env, num_episodes=args.episodes, render=args.render, delay=args.delay, 
-                           fruitbot_reward_negative=args.fruitbot_reward_negative,
-                           fruitbot_reward_positive=args.fruitbot_reward_positive,
-                           fruitbot_reward_wall_hit=args.fruitbot_reward_wall_hit)
-    
-    # Print results
-    print("\n" + "=" * 60)
-    print("EVALUATION RESULTS")
+    print(f"Render: {args.render}")
     print("=" * 60)
-    print(f"Mean Reward:       {stats['mean_reward']:.2f} ± {stats['std_reward']:.2f}")
-    print(f"Reward Range:      [{stats['min_reward']:.2f}, {stats['max_reward']:.2f}]")
-    print(f"Mean Episode Len:  {stats['mean_length']:.1f} steps")
-    print(f"Completion Rate:   {stats['completion_rate']*100:.1f}% ({int(stats['completion_rate']*stats['total_episodes'])}/{stats['total_episodes']})")
+    
+    # Run evaluation with error handling
+    try:
+        stats = evaluate_agent(
+            model, 
+            env, 
+            num_episodes=args.episodes, 
+            render=args.render, 
+            delay=args.delay, 
+            fruitbot_reward_negative=args.fruitbot_reward_negative,
+            fruitbot_reward_positive=args.fruitbot_reward_positive,
+            fruitbot_reward_wall_hit=args.fruitbot_reward_wall_hit
+        )
+        
+        # Print results
+        print("\n" + "=" * 60)
+        print("EVALUATION RESULTS")
+        print("=" * 60)
+        print(f"Mean Reward:       {stats['mean_reward']:.2f} ± {stats['std_reward']:.2f}")
+        print(f"Reward Range:      [{stats['min_reward']:.2f}, {stats['max_reward']:.2f}]")
+        print(f"Mean Episode Len:  {stats['mean_length']:.1f} steps")
+        print(f"Completion Rate:   {stats['completion_rate']*100:.1f}% ({int(stats['completion_rate']*stats['total_episodes'])}/{stats['total_episodes']})")
 
-    print(f"Avg Good Food / episode: {stats['avg_good_food']:.2f}")
-    print(f"Avg Bad  Food / episode: {stats['avg_bad_food']:.2f}")
-    print(f"Avg Wall Hits / episode: {stats['avg_wall_hits']:.2f}")
-    print("=" * 60)
-    
-    env.close()
+        print(f"Avg Good Food / episode: {stats['avg_good_food']:.2f}")
+        print(f"Avg Bad  Food / episode: {stats['avg_bad_food']:.2f}")
+        print(f"Avg Wall Hits / episode: {stats['avg_wall_hits']:.2f}")
+        print("=" * 60)
+    except KeyboardInterrupt:
+        print("\n\nEvaluation interrupted by user (Ctrl+C)")
+    except Exception as e:
+        print(f"\n❌ Error during evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("\nClosing environment...")
+        env.close()
+        print("Environment closed.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\n❌ FATAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        import sys
+        sys.exit(1)

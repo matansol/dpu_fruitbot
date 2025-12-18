@@ -1,6 +1,6 @@
 ^C:\USERS\MATAN\MASTER_THESIS\RL_ENVS\PROCGEN\PROCGEN\CMAKELISTS.TXT
 setlocal
-C:\Users\matan\anaconda3\envs\procgen_env\Library\bin\cmake.exe -SC:/Users/matan/master_thesis/rl_envs/procgen/procgen -BC:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo --check-stamp-file C:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo/CMakeFiles/generate.stamp
+C:\Users\matan\anaconda3\envs\procgen_env_clone\Library\bin\cmake.exe -SC:/Users/matan/master_thesis/rl_envs/procgen/procgen -BC:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo --check-stamp-file C:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo/CMakeFiles/generate.stamp
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone

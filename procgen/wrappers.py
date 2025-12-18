@@ -34,6 +34,9 @@ class ReducedActionWrapper(gym.ActionWrapper):
             act = int(act)
             if act == 3: # map THROW (3) to STAY (1)
                 act = 1
+        elif isinstance(act, int):
+            if act == 3: # map THROW (3) to STAY (1)
+                act = 1
         return int(self.valid_actions[act])
     
     # def seed(self, seed=None):

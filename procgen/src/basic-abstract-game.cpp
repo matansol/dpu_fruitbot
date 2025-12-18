@@ -764,7 +764,7 @@ void BasicAbstractGame::game_reset() {
     grid_size = main_width * main_height;
     grid.resize(main_width, main_height);
 
-    background_index = rand_gen.randn((int)(main_bg_images_ptr->size()));
+    background_index = 1; //rand_gen.randn((int)(main_bg_images_ptr->size()));
 
     AssetGen bggen(&rand_gen);
 

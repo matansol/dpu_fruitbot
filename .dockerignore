@@ -1,0 +1,118 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Build artifacts
+**/.build/
+*.egg-info/
+
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+procgen_env_clone/
+procgen_env/
+
+# Conda environments
+environment.yml
+environment copy.yml
+full_environment.yml
+procgen_env.yml
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Training and evaluation scripts (not needed in production)
+train.py
+evaluate.py
+grid_search.py
+quick_grid_search.py
+
+# Database folder
+DataBase/
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Documentation
+*.md
+!README.md
+CONTRIBUTING.md
+LICENSE
+ASSET_LICENSES.md
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+procgen-build/
+*.cmake
+CMakeCache.txt
+CMakeFiles/
+
+# Docker files (don't copy docker dir into container)
+docker/Dockerfile*
+.dockerignore
+
+# Screenshots and runs
+screenshots/
+runs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Environment files (will be provided at runtime)
+.env
+.env.*
+
+# Spec files
+spec-file.txt
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keep only these 6 models actually used by models_dict in app.py:
+# - 20251201-191008_easy (Agent0)
+# - 20251201-110009_easy (Agent1)
+# - 20251201-002723_easy (Agent2)
+# - 20251130-001800_easy (Agent3)
+# - 20251203-132922_easy (Agent4)
+# - 20251203-104254_easy (Agent5)
+# All other models are excluded below:
+models/fruitbot/20251118-115646_easy
+models/fruitbot/20251118-164559_easy
+models/fruitbot/20251118-191507_easy
+models/fruitbot/20251119-112830_easy
+models/fruitbot/20251126-215809_easy
+models/fruitbot/20251127-165318_easy
+models/fruitbot/20251130-093847_easy
+models/fruitbot/20251213-212435_easy
+models/fruitbot/20251214-084655_easy
+models/fruitbot/20251214-120912_easy
+models/fruitbot/20251215-094437_easy
+models/fruitbot/20251215-173855_easy
+models/fruitbot/20251216-164146_easy
+models/fruitbot/20251216-200621_easy
+models/fruitbot/20251217-101622_easy
