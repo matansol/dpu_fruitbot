@@ -92,12 +92,6 @@ void Game::parse_options(std::string name, VecOptions opts) {
         if (abs(reward_wall_hit_int) > 0) options.fruitbot_reward_wall_hit = reward_wall_hit_int / 100.0f;
         if (abs(reward_step_int) > 0) options.fruitbot_reward_step = reward_step_int / 100.0f;
 
-        std::cout << "fruitbot rewards: completion=" << options.fruitbot_reward_completion
-                  << " positive=" << options.fruitbot_reward_positive
-                  << " negative=" << options.fruitbot_reward_negative
-                  << " wall_hit=" << options.fruitbot_reward_wall_hit
-                  << " step=" << options.fruitbot_reward_step << std::endl;
-
         // FruitBot layout parameters
         opts.consume_int("fruitbot_num_walls", &options.fruitbot_num_walls);
         opts.consume_int("fruitbot_num_good_min", &options.fruitbot_num_good_min);
@@ -164,6 +158,11 @@ void Game::step() {
     step_data.reward = 0;
     step_data.done = false;
     step_data.level_complete = false;
+    step_data.agent_x = 0.0f;
+    step_data.agent_y = 0.0f;
+    step_data.collision_x = -1.0f;
+    step_data.collision_y = -1.0f;
+    step_data.collision_type = 0;
     game_step();
 
     step_data.done = step_data.done || will_force_reset || (cur_time >= timeout);
@@ -197,6 +196,11 @@ void Game::observe() {
     *(int32_t *)(info_bufs[info_name_to_offset.at("prev_level_seed")]) = (int32_t)(prev_level_seed);
     *(uint8_t *)(info_bufs[info_name_to_offset.at("prev_level_complete")]) = (uint8_t)(step_data.level_complete);
     *(int32_t *)(info_bufs[info_name_to_offset.at("level_seed")]) = (int32_t)(current_level_seed);
+    *(float *)(info_bufs[info_name_to_offset.at("agent_x")]) = step_data.agent_x;
+    // *(float *)(info_bufs[info_name_to_offset.at("agent_y")]) = step_data.agent_y;
+    *(float *)(info_bufs[info_name_to_offset.at("collision_x")]) = step_data.collision_x;
+    *(float *)(info_bufs[info_name_to_offset.at("collision_y")]) = step_data.collision_y;
+    *(int32_t *)(info_bufs[info_name_to_offset.at("collision_type")]) = step_data.collision_type;
 }
 
 void Game::game_init() {
@@ -233,6 +237,10 @@ void Game::serialize(WriteBuffer *b) {
     b->write_float(step_data.reward);
     b->write_int(step_data.done);
     b->write_int(step_data.level_complete);
+    b->write_float(step_data.agent_x);
+    b->write_float(step_data.collision_x);
+    b->write_float(step_data.collision_y);
+    b->write_int(step_data.collision_type);
 
     b->write_int(action);
     b->write_int(timeout);
@@ -293,6 +301,10 @@ void Game::deserialize(ReadBuffer *b) {
     step_data.reward = b->read_float();
     step_data.done = b->read_int();
     step_data.level_complete = b->read_int();
+    step_data.agent_x = b->read_float();
+    step_data.collision_x = b->read_float();
+    step_data.collision_y = b->read_float();
+    step_data.collision_type = b->read_int();
 
     action = b->read_int();
     timeout = b->read_int();

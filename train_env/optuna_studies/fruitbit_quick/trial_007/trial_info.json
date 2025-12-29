@@ -1,0 +1,24 @@
+{
+  "trial_number": 7,
+  "hyperparameters": {
+    "learning_rate": 0.003959281492292679,
+    "gamma": 0.9600712918330145,
+    "gae_lambda": 0.9447523655303147,
+    "clip_range": 0.19026349294503092,
+    "ent_coef": 0.004167147855597244,
+    "vf_coef": 0.3147547789418131,
+    "max_grad_norm": 0.7266950337859277,
+    "n_steps": 4096,
+    "batch_size": 2048,
+    "fruitbot_reward_completion": 8.630829072672507,
+    "fruitbot_reward_positive": 3.5246099633264536,
+    "fruitbot_reward_negative": -1.572711731020771,
+    "fruitbot_reward_wall_hit": -7.742443332072203,
+    "fruitbot_reward_step": 0.07282163486118597
+  },
+  "mean_reward": 0.1200000923871994,
+  "std_reward": 1.3090454568297576,
+  "min_reward": -2.7999998331069946,
+  "max_reward": 3.200000122189522,
+  "model_path": "models\\fruitbot\\20251224-012018_easy\\ppo_final.zip"
+}

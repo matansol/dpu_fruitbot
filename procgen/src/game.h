@@ -40,6 +40,11 @@ struct StepData {
     float reward = 0.0f;
     bool done = false;
     bool level_complete = false;
+    float agent_x = 0.0f;  // Agent's x-position for tracking
+    float agent_y = 0.0f;  // Agent's y-position for camera tracking
+    float collision_x = -1.0f;  // X-position of last collision (-1 = no collision)
+    float collision_y = -1.0f;  // Y-position of last collision
+    int collision_type = 0;  // Type of entity collided with (0 = no collision)
 };
 
 struct GameOptions {

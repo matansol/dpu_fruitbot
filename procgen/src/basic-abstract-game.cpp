@@ -743,6 +743,10 @@ void BasicAbstractGame::game_step() {
     erase_if_needed();
 
     step_data.done = step_data.done || is_out_of_bounds(agent);
+    
+    // Track agent position for info
+    // step_data.agent_x = agent->x;
+    // step_data.agent_y = agent->y;
 }
 
 void BasicAbstractGame::erase_if_needed() {

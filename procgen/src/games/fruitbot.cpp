@@ -96,6 +96,11 @@ class FruitBotGame : public BasicAbstractGame {
     void handle_agent_collision(const std::shared_ptr<Entity> &obj) override {
         BasicAbstractGame::handle_agent_collision(obj);
 
+        // Record collision position and type (normalized 0-1 coordinates)
+        step_data.collision_x = obj->x / main_width;
+        step_data.collision_y = obj->y / main_height;
+        step_data.collision_type = obj->type;
+
         if (obj->type == BARRIER) {
             step_data.reward += options.fruitbot_reward_wall_hit;
             step_data.done = true;
@@ -150,10 +155,10 @@ class FruitBotGame : public BasicAbstractGame {
         if (options.distribution_mode == EasyMode) {
             main_width = 10;
         } else {
-            main_width = 20;
+            main_width = 15;
         }
 
-        main_height = 15;
+        main_height = 20;
     }
 
     void set_action_xy(int move_action) override {
@@ -277,7 +282,6 @@ class FruitBotGame : public BasicAbstractGame {
         if (options.fruitbot_reward_step != 0.0f) {
             step_data.reward += options.fruitbot_reward_step;
         }
-        // step_data.info['agent_x'] = agent->x
 
         if (special_action == 1 && (cur_time - last_fire_time) >= KEY_DURATION) {
             float vx = 0.0f;

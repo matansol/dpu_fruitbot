@@ -12,7 +12,6 @@ def make_env(render_mode=None, render=False,
              stay_bonus=0.1,
              env_name=None,
              **kwargs):
-    print("starting make_env with env_name:", env_name)
     if render:
         render_mode = "human"
 
@@ -44,15 +43,13 @@ def make_env(render_mode=None, render=False,
 
     if use_viewer_wrapper:
         env = ViewerWrapper(env, tps=15, info_key="rgb")
-        print("ViewerWrapper applied")
     env = ExtractDictObWrapper(env, key="rgb")
-    print("ExtractDictObWrapper applied")
     # --- convert to gym.Env ---
     gym_env = ToGymEnv(env)
 
     # --- gym-level reduced action wrapper ---
     if use_discrete_action_wrapper:
-        gym_env = ReducedActionWrapper(gym_env, valid_actions=[1, 4, 7])
+        gym_env = ReducedActionWrapper(gym_env, valid_actions=[1, 4, 7, 9])
 
     return gym_env
 

@@ -235,7 +235,7 @@
     <div id="loading-overlay" class="loading-overlay">
         <div class="loading-content">
             <div class="loading-spinner"></div>
-            <div class="loading-text">Agent Updating...</div>
+            <div class="loading-text">Updating Agent...</div>
         </div>
     </div>
 
@@ -316,14 +316,6 @@
                         <div class="legend-symbol">↑</div>
                         <span>Move Up</span>
                     </div>
-                    <!-- <div class="legend-item">
-                        <div class="legend-symbol">⊗</div>
-                        <span>No Action</span>
-                    </div> -->
-                    <!-- <div class="legend-item">
-                        <div class="legend-symbol"></div>
-                        <span>Key = Throw</span>
-                    </div> -->
                 </div>
             </div>
             
@@ -358,6 +350,17 @@
             <button id="btn-use-previous" class="btn">Use Previous Agent</button>
             <button id="btn-use-updated" class="btn btn-primary">Use Updated Agent</button>
         </div>
+    </div>
+
+    <!-- Agent Update Confirmation Page (for similarity level 0) -->
+    <div id="agent-updated-page" class="page" style="text-align: center; padding: 60px 40px;">
+        <h2 style="color: #28a745; margin-bottom: 30px;">✓ Agent Updated Successfully</h2>
+        <p style="font-size: 18px; margin-bottom: 40px;">
+            Your feedback has been incorporated into the agent's behavior.
+        </p>
+        <button id="btn-continue-next-episode" class="btn btn-primary" style="font-size: 18px; padding: 15px 40px;">
+            Continue to Next Episode
+        </button>
     </div>
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>

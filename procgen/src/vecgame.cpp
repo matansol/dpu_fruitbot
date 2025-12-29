@@ -267,6 +267,50 @@ VecGame::VecGame(int _nenvs, VecOptions opts) {
         info_types.push_back(s);
     }
     
+    {
+        struct libenv_tensortype s;
+        strcpy(s.name, "agent_x");
+        s.scalar_type = LIBENV_SCALAR_TYPE_REAL;
+        s.dtype = LIBENV_DTYPE_FLOAT32;
+        s.ndim = 0;
+        s.low.float32 = 0.0f;
+        s.high.float32 = 1000.0f;  // Adjust based on max world width
+        info_types.push_back(s);
+    }
+    
+    {
+        struct libenv_tensortype s;
+        strcpy(s.name, "collision_x");
+        s.scalar_type = LIBENV_SCALAR_TYPE_REAL;
+        s.dtype = LIBENV_DTYPE_FLOAT32;
+        s.ndim = 0;
+        s.low.float32 = -1.0f;
+        s.high.float32 = 1000.0f;
+        info_types.push_back(s);
+    }
+    
+    {
+        struct libenv_tensortype s;
+        strcpy(s.name, "collision_y");
+        s.scalar_type = LIBENV_SCALAR_TYPE_REAL;
+        s.dtype = LIBENV_DTYPE_FLOAT32;
+        s.ndim = 0;
+        s.low.float32 = -1.0f;
+        s.high.float32 = 1000.0f;
+        info_types.push_back(s);
+    }
+    
+    {
+        struct libenv_tensortype s;
+        strcpy(s.name, "collision_type");
+        s.scalar_type = LIBENV_SCALAR_TYPE_DISCRETE;
+        s.dtype = LIBENV_DTYPE_INT32;
+        s.ndim = 0;
+        s.low.int32 = 0;
+        s.high.int32 = 100;  // Max entity type
+        info_types.push_back(s);
+    }
+    
     if (render_human) {
         struct libenv_tensortype s;
         strcpy(s.name, "rgb");

@@ -91,15 +91,27 @@ async def reject_polling_middleware(request: Request, call_next):
 app.mount("/static", StaticFiles(directory="static"), name="static")
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
-# SQLAlchemy setup
-DATABASE_URI = os.getenv("AZURE_DATABASE_URI", "sqlite:///test.db")
-engine = create_engine(DATABASE_URI, echo=False)
-SessionLocal = sessionmaker(bind=engine)
-
-Base = declarative_base()
 # Global variable to control database saving
-
 save_to_db = False
+
+# SQLAlchemy setup - only connect if save_to_db is enabled
+Base = declarative_base()
+engine = None
+SessionLocal = None
+
+if save_to_db:
+    DATABASE_URI = os.getenv("AZURE_DATABASE_URI", "sqlite:///test.db")
+    print(f"Initializing database connection...")
+    try:
+        engine = create_engine(DATABASE_URI, echo=False)
+        SessionLocal = sessionmaker(bind=engine)
+        print(f"Database connection initialized successfully")
+    except Exception as e:
+        print(f"Failed to connect to database: {e}")
+        print(f"Continuing without database support...")
+        save_to_db = False
+else:
+    print("Database saving is disabled (save_to_db=False)")
 
 # class Action(Base):
 #     __tablename__ = "actions"
@@ -158,12 +170,18 @@ class UserChoice(Base):
 
 def clear_database() -> None:
     """Clears the database tables."""
+    if not save_to_db or engine is None:
+        print("Database is disabled, skipping clear_database")
+        return
     print("Clearing database tables...")
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
 def create_database() -> None:
     """Creates the database tables if they do not already exist."""
+    if not save_to_db or engine is None:
+        print("Database is disabled, skipping create_database")
+        return
     print("Ensuring database tables are created...")
     Base.metadata.create_all(bind=engine)
 
@@ -177,16 +195,13 @@ async def in_thread(func: callable, *args, **kw) -> Any:
 class GameControl:
     def __init__(
         self,
-        envs_list: List[gym.Env],
         models_paths: Dict[int, Dict[str, Any]],
-        models_distance: Dict[int, List[Tuple[int, str, List]]],
+        models_distance: Dict[int, Dict[int, Dict[str, Any]]], # {model_i: {target_model_i: {'name': str, 'configs': List[(seed, config_index)]}}}
         user_id: str,
         similar_level_env: int = 0,
         feedback_partial_view: bool = True,
-        env_seed: int = 0,
+        env_seed_list: List[int] = list(range(100, 1000)),
     ) -> None:
-        self.envs_list = envs_list
-        self.env_seed = env_seed
         self.agent_index = 0  # Start with first agent
         self.models_paths = models_paths
         self.models_distance = models_distance
@@ -219,32 +234,104 @@ class GameControl:
         self.past_choices: set = set()  # To avoid repeating the same choice
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
+        self.env_seed_list: list = env_seed_list  # List of seeds for environments
+        self.env_seed_used: list = []  # List of used environments
+        self.current_config_index: int = 0
+        
+        # Define 4 different environment configurations
+        self.env_configs = [
+            # Config 1: No walls, balanced fruits and bad items
+            {
+                'name': 'No Walls - Balanced',
+                'fruitbot_num_walls': 1,
+                'fruitbot_num_good_min': 5,
+                'fruitbot_num_good_range': 5,
+                'fruitbot_num_bad_min': 5,
+                'fruitbot_num_bad_range': 5,
+                'fruitbot_wall_gap_pct': 90,
+                'fruitbot_door_prob_pct': 0,
+                'food_diversity': 4,
+                'use_discrete_action_wrapper': True,
+                'use_stay_bonus_wrapper': False,
+            },
+            # Config 2: With walls, only good fruits
+            {
+                'name': 'Walls - Only Fruits',
+                'fruitbot_num_walls': 3,
+                'fruitbot_num_good_min': 6,
+                'fruitbot_num_good_range': 4,
+                'fruitbot_num_bad_min': 1,
+                'fruitbot_num_bad_range': 0,
+                'fruitbot_wall_gap_pct': 30,
+                'fruitbot_door_prob_pct': 0,
+                'food_diversity': 4,
+                'use_discrete_action_wrapper': True,
+                'use_stay_bonus_wrapper': False,
+            },
+            # Config 3: With walls, few fruits, lots of bad items
+            {
+                'name': 'Walls - Sparse Fruits Many Bad',
+                'fruitbot_num_walls': 4,
+                'fruitbot_num_good_min': 2,
+                'fruitbot_num_good_range': 3,
+                'fruitbot_num_bad_min': 10,
+                'fruitbot_num_bad_range': 5,
+                'fruitbot_wall_gap_pct': 40,
+                'fruitbot_door_prob_pct': 0,
+                'food_diversity': 4,
+                'use_discrete_action_wrapper': True,
+                'use_stay_bonus_wrapper': False,
+            },
+            # Config 4: With walls, doors, and all food types
+            {
+                'name': 'Walls + Doors - Full Complexity',
+                'fruitbot_num_walls': 5,
+                'fruitbot_num_good_min': 5,
+                'fruitbot_num_good_range': 5,
+                'fruitbot_num_bad_min': 5,
+                'fruitbot_num_bad_range': 5,
+                'fruitbot_wall_gap_pct': 50,
+                'fruitbot_door_prob_pct': 20,
+                'food_diversity': 6,
+                'use_discrete_action_wrapper': True,
+                'use_stay_bonus_wrapper': False,
+            }
+        ]
 
-    def create_new_env(self) -> gym.Env:
-        """Create a new environment instance."""
-        env_kwargs = {
-            'fruitbot_num_walls': 2,           # Number of wall rows
-            'fruitbot_num_good_min': 10,       # Minimum good fruits
-            'fruitbot_num_good_range': 1,      # No randomness in good fruit count (always 20)
-            'fruitbot_num_bad_min': 1,         # No bad items
-            'fruitbot_num_bad_range': 1,       # No randomness in bad item count
-            'fruitbot_wall_gap_pct': 50,       # 50% gap in walls
-            'fruitbot_door_prob_pct': 0,       # No locked doors
-            'food_diversity': 4,               # Variety of fruit sprites
-            "use_discrete_action_wrapper": True, 
-            "use_stay_bonus_wrapper": False,
-            
-             }
-        env = gym.make("procgen:procgen-fruitbot-v0", distribution_mode="easy", rand_seed=self.env_seed, **env_kwargs)
-        return env
+    def create_new_env(self, env_seed: int = 0, config_index = None) -> Tuple[gym.Env, int, str]:
+        """Create a new environment instance with specified configuration.
+        
+        Args:
+            env_seed: Random seed for environment generation
+            config_index: Index of configuration to use (0-3), or None for random selection
+        
+        Returns:
+            Configured gym environment
+        """
+        # Select random config if not specified
+        if config_index is None:
+            config_index = random.randint(0, len(self.env_configs) - 1)
+        
+        # Get config and make a copy to avoid modifying the original
+        config = self.env_configs[config_index].copy()
+        config_name = config.pop('name')  # Remove name from kwargs
+        
+        print(f"[create_new_env] Using config: {config_name} (index {config_index})")
+        
+        seed = env_seed if env_seed else self.env_seed
+        env = gym.make("procgen-fruitbot-v0", distribution_mode="easy", rand_seed=seed, **config)
+        return env, config_index, config_name
         
     @timeit
     def reset(self) -> np.ndarray:
+        optinal_seed = [seed for seed in self.env_seed_list if seed not in self.env_seed_used]
         # Set the environment FIRST before calling update_agent
-        self.env_seed += 1  # Increment seed for new environment
-        self.env = self.create_new_env()
-        print(f"[reset] Created new environment with seed {self.env_seed}")
-        # self.env = self.envs_list[0]
+        self.env_seed = random.choice(optinal_seed)
+        self.env_seed_used.append(self.env_seed)
+        
+        # Create new environment with randomly selected configuration
+        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed)
+        print(f"[reset] Created new environment with seed {self.env_seed}, config: {self.current_config_name}")
         
         # Now safe to call update_agent since self.env exists
         self.update_agent(None, None)
@@ -255,6 +342,9 @@ class GameControl:
         # Store observation (Procgen returns RGB array directly)
         print(f"[reset] resetting the episode_obs list")
         self.episode_obs = [obs]
+        
+        # Initialize collision tracking for this episode
+        self.collision_positions = []  # List of {x, y, type, pixel_x, pixel_y}
         
         # Procgen doesn't expose position, track as None
         self.episode_agent_locations = [(None, None)]
@@ -269,26 +359,6 @@ class GameControl:
         self.episode_frames = []
         
         return obs
-
-    # @timeit
-    # def actions_to_moves_sequence(self, episode_actions: List[int]) -> List[Tuple[str, str]]:
-    #     small_arrow = 'turn '  # small arrow is used to indicate the agent turning left or right
-    #     agent_dir = "right"
-    #     move_sequence = []
-    #     for action in episode_actions:
-    #         if action == 0:  # turn left
-    #             agent_dir = turn_agent(agent_dir, "left")
-    #             move_sequence.append((agent_dir, 'turn left'))
-    #         elif action == 1:  # turn right
-    #             agent_dir = turn_agent(agent_dir, "right")
-    #             move_sequence.append((agent_dir, 'turn right'))
-    #         elif action == 2:  # move forward
-    #             move_sequence.append((agent_dir, 'forward'))
-    #         elif action == 3:  # pickup
-    #             move_sequence.append((agent_dir, 'pickup'))
-    #         else:
-    #             move_sequence.append(("invalide move", "invalide move"))
-    #     return move_sequence
 
     # @timeit
     def step(self, action: int, agent_action: bool = False) -> Dict[str, Any]:
@@ -330,21 +400,43 @@ class GameControl:
         
         # Get RGB image from info dict (high-res rendering from InfoRgbRenderWrapper)
         t0 = time.time()
-        img_frame = info.get('rgb', None)
-        
-        if img_frame is None:
-            # Fallback: if 'rgb' not in info, observation itself might be the image
-            print("Warning: 'rgb' not found in info, using observation as image")
         img_frame = info.get('rgb', observation)
         
         # Save raw frame for video creation
         self.episode_frames.append(img_frame.copy())
         t_frame_copy = time.time() - t0
+
+                # Track collision positions with pixel conversion
+        if info['collision_type'] > 0 and not done:
+            collision_x = float(info['collision_x'])
+            collision_y = float(info['collision_y'])
+            collision_type = int(info['collision_type'])
+            agent_y = 0.9
+            
+            # Store collision data with world coordinates
+            collision_data = {
+                'world_x': collision_x,
+                'world_y': collision_y,
+                'agent_y': agent_y,
+                'type': collision_type,
+                'step': self.step_count
+            }
+            self.collision_positions.append(collision_data)
+            
+            # print(f"Collision at world({collision_x:.2f}, {collision_y:.2f}), type={collision_type}")
         
         t0 = time.time()
         image_base64 = image_to_base64(img_frame)
         t_image_encode = time.time() - t0
-        
+            
+            
+            # Entity types:
+            # 1 = BARRIER (wall)
+            # 4 = BAD_OBJ (bad food)
+            # 7 = GOOD_OBJ (good food)
+            # 10 = LOCKED_DOOR
+            # 12 = PRESENT (goal)
+            
         self.episode_images.append(image_base64)
 
         self.current_obs = observation
@@ -444,7 +536,7 @@ class GameControl:
 
     def agent_action(self) -> Dict[str, Any]:
         # Get action from PPO agent
-        agent_config = self.models_paths[self.agent_index]
+        # agent_config = self.models_paths[self.agent_index]
         
         # PPO agent: predict returns (action, _states)
         action, _ = self.ppo_agent.predict(self.current_obs, deterministic=True)
@@ -492,7 +584,6 @@ class GameControl:
         print(f"[update_agent] Current agent path: {self.current_agent_path}")
         print(f"[update_agent] Data received: {data is not None}")
         print(f"[update_agent] observations stored: {len(self.episode_obs)}")
-        print(f"{'='*80}\n")
         
         if self.ppo_agent is None:
             agent_config = self.models_paths[self.agent_index]
@@ -517,9 +608,7 @@ class GameControl:
         if user_feedback is None or len(user_feedback) == 0:
             print("[update_agent] No user feedback provided, returning")
             return None
-        
-        print(f"\n[update_agent] Processing {len(user_feedback)} feedback items")
-        
+                
         # Remove duplicates
         # unique_feedback = {}
         # for feedback in user_feedback:
@@ -572,8 +661,8 @@ class GameControl:
         target_models_indexes = self.models_distance[self.agent_index]
         print(f"\n[update_agent] Evaluating {len(target_models_indexes)} candidate agents...")
         
-        for model_i, model_name, _ in target_models_indexes:
-            print(f"\n[update_agent] --- Evaluating agent: {model_name} (index {model_i}) ---")
+        for model_i, agent_info in target_models_indexes.items():
+            model_name = agent_info['name']
             agent_data = self.models_paths[model_i]
             path = agent_data['path']
             agent = load_agent(self.env, path)
@@ -590,8 +679,6 @@ class GameControl:
                 
                 if agent_predict_action == int(action_feedback['feedback_action']):
                     agent_correctness += 1
-
-            print(f"[update_agent] Agent {model_name} correctness: {agent_correctness}/{len(user_feedback)}")
 
             if agent_correctness > 0:
                 similar_actions = self.count_similar_actions(agent, agent_data, feedback_indexes)
@@ -672,7 +759,6 @@ class GameControl:
             print(f"  prev_agent exists: {self.prev_agent is not None}")
             return {}
 
-        print(f"[agents_different_routs] Creating test environments...")
         env_kwargs = {
             'fruitbot_num_walls': 5,
             'fruitbot_num_good_min': 10,
@@ -685,48 +771,62 @@ class GameControl:
             "use_discrete_action_wrapper": True, 
             "use_stay_bonus_wrapper": False
         }
+        if similarity_level == 0:
+            print(f"[agents_different_routs] Similarity level 0 selected, returning empty result")
+            return {}
 
-        self.env_seed_demonstration = self.env_seed  # Different seed for demonstration
+        if similarity_level == 1: # same env
+            self.env_seed_demonstration = self.env_seed  # Same seed for demonstration
+            config_idx = self.current_config_index
+        elif similarity_level == 2: # random env
+            self.env_seed_demonstration = random.choice(self.env_seed_list)
+            config_idx = random.randint(0, len(self.env_configs) - 1)
+        else: # contrst
+            # Access the configs for the target agent directly from nested dict
+            config_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
+            print(f"[agents_different_routs] Config options for similarity level 2: {config_options}")
+            self.env_seed_demonstration, config_idx = random.choice(config_options)
+            print(f"[agents_different_routs] Selected seed {self.env_seed_demonstration} and config index {config_idx} for similarity level 2")
+        
+        self.env_seed_used.append(self.env_seed_demonstration)
 
-        print(f"[agents_different_routs] Initializing env1 and env2 with seed {self.env_seed_demonstration}...")
-        env1 = gym.make("procgen:procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", rand_seed=self.env_seed_demonstration, **env_kwargs)  
-        env2 = gym.make("procgen:procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", rand_seed=self.env_seed_demonstration, **env_kwargs)  
+        print(f"[agents_different_routs] Initializing env1 and env2 with seed {self.env_seed_demonstration}... similarity_level={similarity_level}")
+        
+        # Choose a random config for this comparison
+        
+        env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx)
+        env2, _, _ = self.create_new_env(self.env_seed_demonstration, config_index=config_idx)
+        print(f"[agents_different_routs] Using config: {config_name} for both agents")
+        # env1 = gym.make("procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", rand_seed=self.env_seed_demonstration, **env_kwargs)  
+        # env2 = gym.make("procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", rand_seed=self.env_seed_demonstration, **env_kwargs)  
         # env1 = gym.make("procgen:procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", **kwargs)  
         # env2 = gym.make("procgen:procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", **kwargs)  
 
-        print(f"[agents_different_routs] Recording frames for current agent...")
-        frames_list1, frames_indexes1, collect_indexes1, wall_collision_index1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
-        print(f"[agents_different_routs] Recorded {len(frames_list1)} frames for current agent")
+        frames_list_updated, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
+        frames_list_prev, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
         
-        print(f"[agents_different_routs] Recording frames for previous agent...")
-        frames_list2, frames_indexes2, collect_indexes2, wall_collision_index2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
-        print(f"[agents_different_routs] Recorded {len(frames_list2)} frames for previous agent")
+        img_updated, _ = dpu_clf.draw_full_path(frames_list_updated, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=5, wall_collision_index=wall_collision_index1, use_rectangle=True)
+        print(f"[agents_different_routs] Path image 1 size: {img_updated.size if img_updated else 'None'}")
         
-        print(f"[agents_different_routs] Drawing path for current agent...")
-        img1, _ = dpu_clf.draw_full_path(frames_list1, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, frames_jumps=5, wall_collision_index=wall_collision_index1)
-        print(f"[agents_different_routs] Path image 1 size: {img1.size if img1 else 'None'}")
-        
-        print(f"[agents_different_routs] Drawing path for previous agent...")
-        img2, _ = dpu_clf.draw_full_path(frames_list2, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, frames_jumps=5, wall_collision_index=wall_collision_index2)
-        print(f"[agents_different_routs] Path image 2 size: {img2.size if img2 else 'None'}")
+        img_prev, _ = dpu_clf.draw_full_path(frames_list_prev, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=5, wall_collision_index=wall_collision_index2, use_rectangle=True)
+        print(f"[agents_different_routs] Path image 2 size: {img_prev.size if img_prev else 'None'}")
 
         self.past_choices.add((self.models_paths[self.prev_agent_index]['name'], self.models_paths[self.agent_index]['name']))
         
-        print(f"[agents_different_routs] Converting images to base64...")
         # Send images at original size without resizing
-        image1_base64 = image_to_base64(img1, resize=None)
-        image2_base64 = image_to_base64(img2, resize=None)
-        print(f"[agents_different_routs] Base64 image 1 length: {len(image1_base64)}")
-        print(f"[agents_different_routs] Base64 image 2 length: {len(image2_base64)}")
+        image_updated_base64 = image_to_base64(img_updated, resize=None)
+        image_prev_base64 = image_to_base64(img_prev, resize=None)
+        print(f"[agents_different_routs] Base64 image 1 length: {len(image_updated_base64)}")
+        print(f"[agents_different_routs] Base64 image 2 length: {len(image_prev_base64)}")
         
         print(f"\n[agents_different_routs] COMPLETE - Returning comparison data")
         print(f"{'='*80}\n")
         
         return {
-            'rawImage1': image1_base64,
-            'rawImage2': image2_base64,
-            'prevMoveSequence': [],
-            'updatedMoveSequence': [],
+            'rawImageUpdated': image_updated_base64,
+            'rawImagePrev': image_prev_base64,
+            # 'prevMoveSequence': [],
+            # 'updatedMoveSequence': [],
         }
 
 
@@ -773,36 +873,57 @@ game_controls: Dict[str, GameControl] = {}
 sid_to_user: Dict[str, str] = {}
 
 # Procgen Fruitbot models configuration
-# TODO: Replace these paths with your actual trained Fruitbot models
-# sub_models_dict = {
-#     0: {'path': 'models\\fruitbot\\20251130-001800_easy\\ppo_final.zip', 'name': 'FruitbotEasy1', 'type': 'ppo', 'vector': (1, 1, 1, 1, 1)},
-#     1: {'path': 'models\\fruitbot\\20251126-135043_easy\\ppo_final.zip', 'name': 'FruitbotBase1', 'type': 'ppo', 'vector': (2, 2, 2, 2, 2)},
-#     2: {'path': 'models\\fruitbot\\20251126-191339_easy\\ppo_final.zip', 'name': 'FruitbotEasy2', 'type': 'ppo', 'vector': (3, 3, 3, 3, 3)},
-#     3: {'path': 'models\\fruitbot\\20251130-001800_easy\\ppo_final.zip', 'name': 'FruitbotHard1', 'type': 'ppo', 'vector': (4, 4, 4, 4, 4)},
-#     4: {'path': 'models\\fruitbot\\20251201-110009_easy\\ppo_final.zip', 'name': 'FruitbotHard2', 'type': 'ppo', 'vector': (5, 5, 5, 5, 5)},
-#     # Add more trained agents as needed
-# }
 
 # models\fruitbot\20251213-212435_easy\ppo_final.zip - לא נתקע ולא מתאמץ לקחת או מתחמק
 # נתקע לא מעט, מנסה להתחמק מהכל - models\fruitbot\20251203-132922_easy\ppo_final.zip
 
 models_dict = {
-    0: {'path': "models\\fruitbot\\20251201-191008_easy\\ppo_final.zip", 'name': 'Agent0'},
-    1: {'path': "models\\fruitbot\\20251201-110009_easy\\ppo_final.zip", 'name': 'Agent1'},
-    2: {'path': "models\\fruitbot\\20251201-002723_easy\\ppo_final.zip", 'name': 'Agent2'}, # models\fruitbot\20251130-093847_easy\ppo_final.zip
-    3: {'path': "models\\fruitbot\\20251130-001800_easy\\ppo_final.zip", 'name': 'Agent3'},
-    4: {'path': "models\\fruitbot\\20251203-132922_easy\\ppo_final.zip", 'name': 'Agent4'}, # avoid all
-    5: {'path': "models\\fruitbot\\20251203-104254_easy\\ppo_final.zip", 'name': 'Agent5'}, # zig-zag
+    0: {'path': "models/fruitbot/20251222-161336_easy/ppo_final.zip", 'name': 'Agent0'},
+    1: {'path': "models/fruitbot/20251225-083104_easy/ppo_final.zip", 'name': 'Agent1'},
+    2: {'path': "models/fruitbot/20251224-140335_easy/ppo_final.zip", 'name': 'Agent2'},
+    3: {'path': "models/fruitbot/20251130-001800_easy/ppo_final.zip", 'name': 'Agent3'},
+    4: {'path': "models/fruitbot/20251203-132922_easy/ppo_final.zip", 'name': 'Agent4'}, # avoid all
+    5: {'path': "models/fruitbot/20251224-133036_easy/ppo_final.zip", 'name': 'Agent5'}, 
 }
 
-
-models_distance ={
-    0: [(1, 'FruitbotBase1', []), (2, 'FruitbotEasy2', []), (3, 'FruitbotHard1', []), (4, 'FruitbotHard2', [])],
-    1: [(0, 'FruitbotEasy1', []), (2, 'FruitbotEasy2', []), (3, 'FruitbotHard1', []), (5, 'FruitbotHard2', [])],
-    2: [(0, 'FruitbotEasy1', []), (1, 'FruitbotBase1', []), (3, 'FruitbotHard1', []), (4, 'FruitbotHard2', [])],
-    3: [(0, 'FruitbotEasy1', []), (1, 'FruitbotBase1', []), (2, 'FruitbotEasy2', []), (5, 'FruitbotHard2', [])],
-    4: [(0, 'FruitbotEasy1', []), (1, 'FruitbotBase1', []), (2, 'FruitbotEasy2', []), (3, 'FruitbotHard1', [])],
-    5: [(0, 'FruitbotEasy1', []), (1, 'FruitbotBase1', []), (2, 'FruitbotEasy2', []), (4, 'FruitbotHard1', [])],
+# for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
+models_distance = {
+    0: {
+        1: {'name': 'Agent1', 'configs': [(12343, 0), (15678, 2)]},
+        2: {'name': 'Agent2', 'configs': [(10234, 1), (18456, 3), (14567, 0)]},
+        3: {'name': 'Agent3', 'configs': [(11890, 2), (16234, 1)]},
+        4: {'name': 'Agent4', 'configs': [(13456, 3), (17890, 0), (19123, 2)]}
+    },
+    1: {
+        0: {'name': 'Agent0', 'configs': [(10567, 1), (15234, 3)]},
+        2: {'name': 'Agent2', 'configs': [(12789, 0), (16890, 2), (18234, 1)]},
+        3: {'name': 'Agent3', 'configs': [(14123, 2), (17456, 0)]},
+        5: {'name': 'Agent5', 'configs': [(11234, 3), (19567, 1)]}
+    },
+    2: {
+        0: {'name': 'Agent0', 'configs': [(10890, 2), (15890, 0), (18567, 3)]},
+        1: {'name': 'Agent1', 'configs': [(12456, 1), (16123, 2)]},
+        3: {'name': 'Agent3', 'configs': [(13890, 0), (17234, 3)]},
+        4: {'name': 'Agent4', 'configs': [(11567, 2), (19890, 1), (14890, 0)]}
+    },
+    3: {
+        0: {'name': 'Agent0', 'configs': [(10123, 3), (15567, 1)]},
+        1: {'name': 'Agent1', 'configs': [(12890, 2), (16567, 0), (19234, 3)]},
+        2: {'name': 'Agent2', 'configs': [(14234, 1), (17890, 2)]},
+        5: {'name': 'Agent5', 'configs': [(11890, 0), (18890, 3)]}
+    },
+    4: {
+        0: {'name': 'Agent0', 'configs': [(10456, 2), (15123, 0), (19456, 1)]},
+        1: {'name': 'Agent1', 'configs': [(13234, 3), (17123, 1)]},
+        2: {'name': 'Agent2', 'configs': [(11123, 0), (16456, 2)]},
+        3: {'name': 'Agent3', 'configs': [(14567, 1), (18123, 3), (19789, 0)]}
+    },
+    5: {
+        0: {'name': 'Agent0', 'configs': [(10789, 1), (15456, 3)]},
+        1: {'name': 'Agent1', 'configs': [(12123, 0), (16789, 2), (19012, 1)]},
+        2: {'name': 'Agent2', 'configs': [(13567, 3), (17567, 0)]},
+        4: {'name': 'Agent4', 'configs': [(11456, 2), (18456, 1)]}
+    },
 }
 # C:\Users\matan\master_thesis\rl_envs\procgen\models\fruitbot\20251130-001800_easy
 # sub_models_distance = {
@@ -829,25 +950,25 @@ action_dir = {
 
 
 # ------------------ UTILITY FUNCTION -----------------------------
-async def finish_turn(
-    response: Dict[str, Any],
-    user_game: GameControl,
-    sid: str,
-    need_feedback_data: bool = True
-) -> None:
-    """Common logic after an action is processed."""
-    if response["done"]:
-        summary = user_game.end_of_episode_summary(need_feedback_data)
+# async def finish_turn(
+#     response: Dict[str, Any],
+#     user_game: GameControl,
+#     sid: str,
+#     need_feedback_data: bool = True
+# ) -> None:
+#     """Common logic after an action is processed."""
+#     if response["done"]:
+#         summary = user_game.end_of_episode_summary(need_feedback_data)
         
-        # Create video from episode frames
-        video_path = user_game.create_episode_video()
-        if video_path:
-            summary['video_path'] = video_path
+#         # Create video from episode frames
+#         video_path = user_game.create_episode_video()
+#         if video_path:
+#             summary['video_path'] = video_path
         
-        # Send the summary to the front-end:
-        await sio.emit("episode_finished", summary, to=sid)
-    else:
-        await sio.emit("game_update", response, to=sid)
+#         # Send the summary to the front-end:
+#         await sio.emit("episode_finished", summary, to=sid)
+#     else:
+#         await sio.emit("game_update", response, to=sid)
 
 # -------------------- FASTAPI ROUTES ----------------------------
 templates = Jinja2Templates(directory="templates")
@@ -924,52 +1045,22 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
             # Safely convert group to int, default to 0 if invalid
             try:
                 group_val = data.get("group", "0")
-                if isinstance(group_val, str) and "${" in group_val:
+                if isinstance(group_val, str) and len(group_val.strip()) > 1:
+                    print(f"[start_game] Invalid group value '{group_val}', defaulting to 0")
                     similarity_level = 0
                 else:
                     similarity_level = int(group_val)
             except (ValueError, TypeError):
                 similarity_level = 0
 
-            kwargs = {"use_discrete_action_wrapper": True, 
-                      "use_stay_bonus_wrapper": False,
-                      'food_diversity': 4,
-                    'fruitbot_num_walls': 5,
-                    'fruitbot_num_good_min': 5,
-                    'fruitbot_num_good_range': 1,
-                    'fruitbot_num_bad_min': 5,
-                    'fruitbot_num_bad_range': 1,
-                    'fruitbot_wall_gap_pct': 50,
-                    'fruitbot_door_prob_pct': 0,
-                    }
-
-
-            # Create Procgen Fruitbot environment
-            try:
-                env_instance = gym.make(
-                    'procgen-fruitbot-v0',  # procgen registers without namespace prefix
-                    render_mode='rgb_array',
-                    distribution_mode='easy',
-                    num_levels=0,
-                    start_level=0,
-                    **kwargs,
-                    # **env_kwargs
-                )
-            except Exception as env_error:
-                print(f"[start_game] ERROR creating environment: {env_error}")
-                import traceback
-                traceback.print_exc()
-                raise
-            
             try:
                 new_game = GameControl(
-                    [env_instance],
                     models_dict,
                     models_distance,
                     user_id,
                     similar_level_env=similarity_level,
                     feedback_partial_view=True,
-                    env_seed=random.randint(0, 1000),
+                    env_seed_list=list(range(10000, 20000)),
                 )
             except Exception as gc_error:
                 print(f"[start_game] ERROR creating GameControl: {gc_error}")
@@ -986,7 +1077,7 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
                     session = SessionLocal()
                     new_user = Users(
                         user_id=user_id,
-                        created_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                         similarity_level=similarity_level,
                     )
                     session.add(new_user)
@@ -1004,8 +1095,8 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
         if data.get("updateAgent", False):
             new_game.update_agent(data, sid)
             
-        if data.get("userNoFeedback", False):
-            new_game.save_no_user_feedback(data, sid)
+        # if data.get("userNoFeedback", False):
+        #     new_game.save_no_user_feedback(data, sid)
         
         response = new_game.get_initial_observation()
         response['action'] = None
@@ -1120,14 +1211,17 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         # Get action from agent
         action, _ = user_game.ppo_agent.predict(user_game.current_obs, deterministic=True)
         action = action.item() if hasattr(action, 'item') else int(action)
-        if action == 3:
-            action = 1  # Replace THROW with NOOP
+        # if action == 3:
+        #     action = 1  # Replace THROW with NOOP
         
         # Step environment
         result = user_game.step(action)
-        
         done = result['done']
 
+        # take only part of the observation (up action do not change much)
+        if action == 1 and result['step_count'] % 2 > 0 and result['reward'] == 0 and not done:
+            continue
+        
         episode_images.append(result['image'])
         episode_actions.append(action)
         episode_rewards.append(float(result['reward']))
@@ -1150,6 +1244,7 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
                 'actions': episode_actions[batch_start_index:],
                 'rewards': episode_rewards[batch_start_index:],
                 'positions': episode_positions[batch_start_index:],
+                'collisions': {}, #user_game.collision_positions,  # Add collision data
                 'score': float(total_score),  # Ensure native Python float
                 'steps': int(step_count),      # Ensure native Python int
                 'is_final': bool(done),        # Convert numpy bool_ to Python bool
@@ -1164,6 +1259,7 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         'actions': episode_actions,
         'rewards': episode_rewards,
         'positions': episode_positions,
+        'collisions': {}, #user_game.collision_positions,  # Add collision data
         'score': float(total_score),  # Ensure native Python types for JSON
         'steps': int(step_count)
     }
@@ -1203,7 +1299,7 @@ async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playe
         await next_episode(sid)
         return
         
-    if user_game.similar_level_env == 10:
+    if user_game.similar_level_env == 0:
         current_path = user_game.current_agent_path
         print(f"[compare_agents] Similarity level is 0 - no visual comparison needed")
         print(f"  Current agent path: {current_path}")
@@ -1212,16 +1308,24 @@ async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playe
         if save_to_db:
             user_game.save_user_choice(True, '', datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"))
         print(f"[compare_agents] Update complete for user {user_id}")
-        await next_episode(sid)
+        
+        # For similarity level 0, send confirmation response instead of starting next episode
+        print(f"[compare_agents] Emitting agent_updated_no_comparison response to client...")
+        await sio.emit("compare_agents", {
+            "similarity_level": 0,
+            "agent_updated": True,
+            "message": "Agent updated successfully"
+        }, to=sid)
+        print(f"[compare_agents] Response sent successfully")
         return
     
     print(f"[compare_agents] Calling agents_different_routs...")
     res = user_game.agents_different_routs(user_game.similar_level_env)
     
-    if res and 'rawImage1' in res and 'rawImage2' in res:
+    if res and 'rawImageUpdated' in res and 'rawImagePrev' in res:
         print(f"[compare_agents] Successfully generated comparison images")
-        print(f"  Image 1 size: {len(res['rawImage1'])} chars")
-        print(f"  Image 2 size: {len(res['rawImage2'])} chars")
+        print(f"  Image 1 size: {len(res['rawImageUpdated'])} chars")
+        print(f"  Image 2 size: {len(res['rawImagePrev'])} chars")
         print(f"[compare_agents] Emitting compare_agents response to client...")
         await sio.emit("compare_agents", res, to=sid)
         print(f"[compare_agents] Response sent successfully")
@@ -1279,9 +1383,9 @@ async def agent_select(sid: str, data: Dict[str, Any]) -> None:
         demonstration_time_fmt = datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
     if save_to_db:
-        user_game.save_user_choice(not data['use_old_agent'], data.get('choiceExplanation', ''), demonstration_time_fmt)
+        user_game.save_user_choice(data['use_updated'], data.get('choiceExplanation', ''), demonstration_time_fmt)
         
-    if data['use_old_agent']:
+    if data['use_updated'] == False:
         user_game.revert_to_old_agent()
         print(f"User {user_id} switched to the old agent.")
     else:
@@ -1291,7 +1395,6 @@ async def agent_select(sid: str, data: Dict[str, Any]) -> None:
 
 # ---------------------- RUNNING THE APP -------------------------
 if __name__ == "__main__":
-    save_to_db = True
     if save_to_db:
         # clear_database()
         create_database()

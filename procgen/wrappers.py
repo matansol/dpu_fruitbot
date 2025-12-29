@@ -29,14 +29,14 @@ class ReducedActionWrapper(gym.ActionWrapper):
         Map Discrete(len(valid_actions)) -> original action in Discrete(15).
         SB3 usually sends a scalar or a 0-dim array.
         """
-        if isinstance(act, np.ndarray):
-            # VecEnv / SB3 sometimes give numpy scalars/arrays
-            act = int(act)
-            if act == 3: # map THROW (3) to STAY (1)
-                act = 1
-        elif isinstance(act, int):
-            if act == 3: # map THROW (3) to STAY (1)
-                act = 1
+        # if isinstance(act, np.ndarray):
+        #     # VecEnv / SB3 sometimes give numpy scalars/arrays
+        #     act = int(act)
+        #     if act == 3: # map THROW (3) to STAY (1)
+        #         act = 1
+        # elif isinstance(act, int):
+        #     if act == 3: # map THROW (3) to STAY (1)
+        #         act = 1
         return int(self.valid_actions[act])
     
     # def seed(self, seed=None):

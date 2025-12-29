@@ -195,13 +195,13 @@ LIBENV_DIR:UNINITIALIZED=C:\Users\matan\anaconda3\envs\procgen_env_clone\lib\sit
 PROCGEN_PACKAGE:BOOL=OFF
 
 //The directory containing a CMake configuration file for Qt5Core.
-Qt5Core_DIR:PATH=C:/Users/matan/anaconda3/envs/rl_env/Library/lib/cmake/Qt5Core
+Qt5Core_DIR:PATH=C:/Users/matan/anaconda3/envs/procgen_env_clone/Library/lib/cmake/Qt5Core
 
 //The directory containing a CMake configuration file for Qt5Gui.
-Qt5Gui_DIR:PATH=C:/Users/matan/anaconda3/envs/rl_env/Library/lib/cmake/Qt5Gui
+Qt5Gui_DIR:PATH=C:/Users/matan/anaconda3/envs/procgen_env_clone/Library/lib/cmake/Qt5Gui
 
 //The directory containing a CMake configuration file for Qt5.
-Qt5_DIR:PATH=C:/Users/matan/anaconda3/envs/rl_env/Library/lib/cmake/Qt5
+Qt5_DIR:PATH=C:/Users/matan/anaconda3/envs/procgen_env_clone/Library/lib/cmake/Qt5
 
 //Value Computed by CMake
 codegen_BINARY_DIR:STATIC=C:/Users/matan/master_thesis/rl_envs/procgen/procgen/.build/relwithdebinfo

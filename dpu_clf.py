@@ -13,6 +13,17 @@ import os
 import cv2
 # from IPython.display import display  # Not needed in production web app
 
+
+# Object types:const int BARRIER = 1;
+# const int OUT_OF_BOUNDS_WALL = 2;
+# const int PLAYER_BULLET = 3;
+# const int BAD_OBJ = 4;
+# const int GOOD_OBJ = 7;
+# const int LOCKED_DOOR = 10;
+# const int LOCK = 11;
+# const int PRESENT = 12;
+collision_object_types = [3, 4]
+
 def timeit(func):
     """Decorator to measure function execution time."""
     @wraps(func)
@@ -519,8 +530,19 @@ def find_x_on_row(frame: np.ndarray, target_hex: str = '#464646', row: int = 470
     return int(np.min(xs))
 
 
-def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radius: int = 5, out_color: str = 'blue', final_step: bool = False) -> np.ndarray:
-    """Draw a red filled dot at (x+offset_x, y) on a copy of frame and return it. If x is None, returns a copy unchanged."""
+def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radius: int = 5, out_color: str = 'blue', final_step: bool = False, use_rectangle: bool = False) -> np.ndarray:
+    """Draw a red filled dot at (x+offset_x, y) on a copy of frame and return it. If x is None, returns a copy unchanged.
+    
+    Args:
+        frame: Input image frame
+        x: X coordinate
+        y: Y coordinate
+        offset_x: X offset to apply
+        radius: Radius for circle or half-width/height for rectangle
+        out_color: Color of outer shape ('blue', 'red', 'purple')
+        final_step: Whether this is the final step
+        use_rectangle: If True, draw rectangle instead of circle
+    """
     img = np.asarray(frame).copy()
     h, w, _ = img.shape
     if x is None:
@@ -530,13 +552,15 @@ def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radiu
     dot_y = int(np.clip(y, 0, h - 1)) + 3
 
     radius_bonus = 0
-    if final_step:
+    if out_color == 'red':
         radius_bonus = 10
-        dot_y -= 3
+        dot_y -= 5
+    if out_color == 'purple':
+        radius_bonus = 3
     # Convert to RGBA for transparency support
     pil = Image.fromarray(img).convert("RGBA")
     
-    # Draw the larger semi-transparent blue circle first (background)
+    # Draw the larger semi-transparent shape first (background)
     overlay = Image.new("RGBA", pil.size, (0, 0, 0, 0))
     ov_draw = ImageDraw.Draw(overlay)
     big_radius = 24 + radius_bonus
@@ -545,14 +569,20 @@ def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radiu
     right_b = min(dot_x + big_radius, pil.size[0] - 1)
     bottom_b = min(dot_y + big_radius, pil.size[1] - 1)        
     if out_color == 'red':
-        out_color = (255, 0, 0, 180)  # semi-transparent red
+        out_color = (255, 0, 0, 200)  # semi-transparent red
     elif out_color == 'purple':
-        out_color = (128, 0, 128, 180)  # semi-transparent purple
+        out_color = (96, 0, 128, 200)  # semi-transparent purple
     else:
-        out_color = (0, 0, 255, 90)  # semi-transparent blue
-    ov_draw.ellipse((left_b, top_b, right_b, bottom_b), fill=out_color)  # semi-transparent blue
+        out_color = (0, 0, 255, 60)  # semi-transparent blue
     
-    # Composite the blue circle onto the image
+    if use_rectangle:
+        # Draw rectangle instead of circle
+        ov_draw.rectangle((left_b, top_b, right_b, bottom_b), fill=out_color)
+    else:
+        # Draw circle
+        ov_draw.ellipse((left_b, top_b, right_b, bottom_b), fill=out_color)
+    
+    # Composite the shape onto the image
     pil = Image.alpha_composite(pil, overlay)
     
     # Draw the smaller orange circle on top
@@ -568,12 +598,66 @@ def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radiu
     
     return np.array(pil)
 
+def draw_collision_on_image(image: np.ndarray, collision_x: float, collision_y: float, wall_collision_index: int=-1) -> np.ndarray:
+    """Draw a yellow X at the object that the agent collided with on the image and return the annotated image.
+    
+    Args:
+        image: Image array to draw on
+        collision_x: Normalized X coordinate (0-1, where 0=left, 1=right)
+        collision_y: Normalized Y coordinate (0-1, where 0=bottom, 1=top)
+    
+    Returns:
+        Annotated image array with yellow X marker
+    """
+    if image is None:
+        print("Image is None, cannot draw collision.")
+        return None
+
+    # y_offset = 160
+    # if wall_collision_index >= 0:
+    #     y_offset = 0
+    
+    # Get image dimensions
+    total_height, img_width = image.shape[:2]
+    print(f"Image original dimensions: width={img_width}, height={total_height}")
+    img_height = 1060 # for easy world coord conversion,   image unit=53
+    
+
+    # collision_x: 0 = left edge, 1 = right edge
+    # collision_y: 0 = bottom edge, 1 = top edge (need to invert for screen coords)
+    x_pix = int(collision_x * img_width)
+    y_pix = total_height - int((collision_y) * img_height) # y_offset + int((1.0 - collision_y) * img_height)  # Invert Y for screen coords
+
+    print(f"Collision at normalized coords: ({collision_x:.3f}, {collision_y:.3f}) -> pixel coords: ({x_pix}, {y_pix})")
+    # Convert to numpy array if PIL Image
+    if isinstance(image, Image.Image):
+        img_array = np.array(image)
+    else:
+        img_array = image
+    
+    # Draw a yellow X marker at collision point
+    marker_size = 10
+    marker_color = (255, 255, 0)  # Yellow in RGB
+    
+    # Draw X shape (two diagonal lines)
+    cv2.line(img_array, 
+             (x_pix - marker_size, y_pix - marker_size), 
+             (x_pix + marker_size, y_pix + marker_size), 
+             marker_color, 3)
+    cv2.line(img_array, 
+             (x_pix + marker_size, y_pix - marker_size), 
+             (x_pix - marker_size, y_pix + marker_size), 
+             marker_color, 3)
+    
+    return img_array
+
 
 def record_bot_path_on_image(
                               base_image: Image.Image = None,
                               frames_list: list = [],
                               frames_indexes: list = [],
                               collect_indexes: list = [],
+                              collisions: list = [],
                               wall_collision_index: int = -1,
                               frame_start: int = 0,
                               frames_jumps: int = 3,
@@ -585,8 +669,13 @@ def record_bot_path_on_image(
                               radius: int = 7,
                               path_number: int = 0,
                               frames_in_path: int = 60,
+                              use_rectangle: bool = False,
                               ) -> Tuple[Image.Image, int]:
-    """Record bot path on the full image and return the final annotated image."""
+    """Record bot path on the full image and return the final annotated image.
+    
+    Args:
+        use_rectangle: If True, draw rectangles instead of circles around dots
+    """
 
     if base_image is None:
         print("Base image is None, cannot draw path.")
@@ -608,21 +697,28 @@ def record_bot_path_on_image(
         cx = find_x_on_row(frame, target_hex, row=row)
         final_step = False
         if frame_index in collect_indexes:
-            out_color = 'purple'
+            out_color = 'blue' #'purple'
         elif frame_index == wall_collision_index:
             out_color = 'red'
             final_step = True
         else:
             out_color = 'blue'
-        base_frame = draw_orenge_dot(base_frame, cx, bot_cy, offset_x=offset_x, out_color=out_color, final_step=final_step)
+
+
+        base_frame = draw_orenge_dot(base_frame, cx, bot_cy, offset_x=offset_x, out_color=out_color, final_step=final_step, use_rectangle=use_rectangle)
         # display(Image.fromarray(base_frame))
         if i+1 >= len(frames_indexes):
-            print("Reached end of frames_indexes while drawing path.")
-            print(f"i={i}, len(frames_indexes)={len(frames_indexes)}")
             jumps = 1
         else:
             jumps = frames_indexes[i+1] - frames_indexes[i]
         bot_cy -= bot_step*jumps
+
+    for collision in collisions:
+        base_frame = draw_collision_on_image(
+            base_frame,
+            collision_x=collision['x'],
+            collision_y=collision['y'],
+            wall_collision_index=wall_collision_index,)
     result_image = Image.fromarray(base_frame)
     
     return result_image, last_frame
@@ -656,15 +752,21 @@ def combine_paths(first_image: Image.Image, sec_image: Image.Image) -> Image.Ima
     return combined
 
 
-def draw_full_path(frames_list: list = [], frames_indexes: list = [], collect_indexes: list = [], frames_jumps: int = 3, wall_collision_index: int = -1) -> Tuple[Image.Image, Image.Image]:
-    """Draw full path across all frames and return the combined image."""
+def draw_full_path(frames_list: list = [], frames_indexes: list = [], collect_indexes: list = [], collisions: list = [], frames_jumps: int = 3, wall_collision_index: int = -1, use_rectangle: bool = False) -> Tuple[Image.Image, Image.Image]:
+    """Draw full path across all frames and return the combined image.
+    
+    Args:
+        frames_list: List of frame images
+        frames_indexes: List of frame indices
+        collect_indexes: List of collection event indices
+        frames_jumps: Number of frames to jump between recordings
+        wall_collision_index: Index where wall collision occurred
+        use_rectangle: If True, draw rectangles instead of circles
+    """
     path_length = 50
 
     if frames_list is None:
         raise ValueError("Either frames_list or frames_path must be provided.")
-
-                
-    print(f"using frames list with {len(frames_list)} frames")
 
     base_frames = []
     
@@ -673,11 +775,9 @@ def draw_full_path(frames_list: list = [], frames_indexes: list = [], collect_in
         if frame_index % path_length == 0:
             base_frames.append(frames_list[i])
 
-    print(f"base_frames length: {len(base_frames)}")
     combined_image_clean = base_frames[0]
-    
     for i in range(1, len(base_frames)):
-            combined_image_clean = combine_paths(combined_image_clean, base_frames[i])
+        combined_image_clean = combine_paths(combined_image_clean, base_frames[i])
     
 
     image, _ = record_bot_path_on_image(
@@ -685,6 +785,7 @@ def draw_full_path(frames_list: list = [], frames_indexes: list = [], collect_in
             frames_list=frames_list,
             frames_indexes=frames_indexes,
             collect_indexes=collect_indexes,
+            collisions=collisions,
             wall_collision_index=wall_collision_index,
             frame_start=0,
             frames_jumps=frames_jumps,
@@ -695,59 +796,16 @@ def draw_full_path(frames_list: list = [], frames_indexes: list = [], collect_in
             radius=5,
             path_number=0,
             frames_in_path=path_length,
+            use_rectangle=use_rectangle,
         )
-
-    # first_frame = 0
-    # path_num = 0
-    # path_images = []
-    # last_frame = 0
-    
-    # while last_frame < len(frames_list) - 1:
-    #     image, last_frame = record_bot_path_on_image(
-    #         # base_image=frames_list[first_frame] if len(frames_list) > first_frame else None,
-    #         frames_list=frames_list,
-    #         frames_indexes=frames_indexes,
-    #         collect_indexes=collect_indexes,
-    #         wall_collision_index=wall_collision_index,
-    #         frame_start=last_frame,
-    #         frames_jumps=frames_jumps,
-    #         page_steps=22, #path_length//frames_jumps,
-    #         row=470,
-    #         target_hex='#464646',
-    #         offset_x=12,
-    #         radius=5,
-    #         path_number=path_num,
-    #         frames_in_path=path_length,
-    #     )
-    #     print(f"Completed path number {path_num}, last_frame={last_frame}")
-    #     path_num += 1
-    #     # last_frame += 1
-        
-    #     if image is None:
-    #         break
-        
-    #     path_images.append(image)
-    #     first_frame += path_length // frames_jumps
-    
-
-    # if len(path_images) == 0:
-    #     return None
-    
-    # if len(path_images) == 1:
-    #     combined_image = path_images[0]
-    # else:
-    #     # Combine all path images
-    #     combined_image = path_images[0] # combine_paths(path_images[0], path_images[1], save_to_file=False, save_path='')
-        
-    #     for i in range(1, len(path_images)):
-    #         combined_image = combine_paths(combined_image, path_images[i])
-    
     return image, combined_image_clean
 
+    
 def record_frames(env, model: PPO, frames_jumps: int = 5):# -> List[Image.Image], List[int], int:
     frames = []
     frames_indexes = []
     collect_indexes = []
+    collisions = []
     wall_collision_index = -1
     frames_in_path = 60
     obs = env.reset()
@@ -756,6 +814,7 @@ def record_frames(env, model: PPO, frames_jumps: int = 5):# -> List[Image.Image]
     done = False
     step_index = 0
     while True:
+        save_frame = False
         action, _ = model.predict(obs, deterministic=True)
         action = action.item() if hasattr(action, 'item') else int(action)
         
@@ -766,6 +825,16 @@ def record_frames(env, model: PPO, frames_jumps: int = 5):# -> List[Image.Image]
             done = terminated or truncated
         else:
             obs, reward, done, info = result
+        
+        if 'collision_type' in info and (info['collision_type'] == 7 or info['collision_type'] == 4):
+            collisions.append({
+                'step': step_index,
+                'x': info['collision_x'],
+                'y': info['collision_y'],
+                'collision_type': info['collision_type'],
+            })
+            save_frame = True
+
         if done:
             # save the last frame again
             img = frames[-1]
@@ -775,7 +844,7 @@ def record_frames(env, model: PPO, frames_jumps: int = 5):# -> List[Image.Image]
                 wall_collision_index = step_index
             break
 
-        save_frame = False
+        
         if abs(reward) > 0:
             if reward < 0 and done:
                 wall_collision_index = step_index
@@ -797,7 +866,7 @@ def record_frames(env, model: PPO, frames_jumps: int = 5):# -> List[Image.Image]
             frames_indexes.append(step_index)
         step_index += 1
         
-    return frames, frames_indexes, collect_indexes, wall_collision_index
+    return frames, frames_indexes, collect_indexes, wall_collision_index, collisions
 
 def compare_models(env1, env2, model1: PPO, model2: PPO, save_to_file: bool = False, save_path: str = ''):
     """Compare two models by recording their frames and generating path visualizations.
@@ -822,8 +891,8 @@ def compare_models(env1, env2, model1: PPO, model2: PPO, save_to_file: bool = Fa
 
     frames_jumps = 2
     # Record frames for both models
-    frames_list1, frames_indexes1, collect_indexes1, wall_collision_index1 = record_frames(env1, model1, frames_jumps=frames_jumps)
-    frames_list2, frames_indexes2, collect_indexes2, wall_collision_index2 = record_frames(env2, model2, frames_jumps=frames_jumps)
+    frames_list1, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = record_frames(env1, model1, frames_jumps=frames_jumps)
+    frames_list2, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = record_frames(env2, model2, frames_jumps=frames_jumps)
 
     # Draw full paths
     if save_to_file and save_path:
@@ -835,7 +904,7 @@ def compare_models(env1, env2, model1: PPO, model2: PPO, save_to_file: bool = Fa
         out_path1 = ''
         out_path2 = ''
 
-    model1_path_image = draw_full_path(frames_list=frames_list1, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index1)
-    model2_path_image = draw_full_path(frames_list=frames_list2, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index2)
+    model1_path_image, _ = draw_full_path(frames_list=frames_list1, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index1, use_rectangle=False)
+    model2_path_image, _ = draw_full_path(frames_list=frames_list2, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index2, use_rectangle=False)
     
     return model1_path_image, model2_path_image

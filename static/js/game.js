@@ -14,7 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
         welcome: document.getElementById('welcome-page'),
         agentPlay: document.getElementById('agent-play-page'),
         overview: document.getElementById('overview-page'),
-        compare: document.getElementById('compare-page')
+        compare: document.getElementById('compare-page'),
+        agentUpdated: document.getElementById('agent-updated-page')
     };
 
     const buttons = {
@@ -27,7 +28,8 @@ document.addEventListener('DOMContentLoaded', () => {
         updateAgent: document.getElementById('btn-update-agent'),
         noFeedback: document.getElementById('btn-no-feedback'),
         usePrevious: document.getElementById('btn-use-previous'),
-        useUpdated: document.getElementById('btn-use-updated')
+        useUpdated: document.getElementById('btn-use-updated'),
+        continueNextEpisode: document.getElementById('btn-continue-next-episode')
     };
 
     const canvases = {
@@ -48,7 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- GET PLAYER NAME FROM URL OR GENERATE RANDOM ---
     function getPlayerNameFromURL() {
         const urlParams = new URLSearchParams(window.location.search);
-        const prolificId = urlParams.get('PROLIFIC_PID');
+        const prolificId = urlParams.get('prolificId');
+        const group = urlParams.get('group', 0);
         
         if (prolificId) {
             console.log('Prolific ID:', prolificId);
@@ -60,19 +63,34 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('Generated random player ID:', randomId);
         return randomId.toString();
     }
+    // --- GET PLAYER Group FROM URL OR GENERATE RANDOM ---
+    function getPlayerGroupFromURL() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const group = urlParams.get('group');
+        
+        if (group) {
+            console.log('Group:', group);
+            return group;
+        }
+        
+        console.log('could not find group, return default value=1');
+        return 1;
+    }
 
     // --- STATE ---
     let currentPage = 'welcome';
     let episodeImages = [];
     let episodeActions = [];
     let episodePositions = [];  // Add positions array
+    let episodeCollisions = [];  // Add collisions array
     let currentActionIndex = 0;
     let userFeedback = [];
     let previousAgentImages = [];
     let updatedAgentImages = [];
     let totalScore = 0;
     let playerName = getPlayerNameFromURL();
-    
+    let group = getPlayerGroupFromURL();
+
     // Playback state
     let isPlaying = false;
     let playbackInterval = null;
@@ -217,6 +235,90 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.restore();
     }
 
+    function worldToPixel(worldX, worldY, agentY, canvasWidth, canvasHeight, mainWidth = 10, mainHeight = 15, res = 64) {
+        // FruitBot camera follows agent vertically
+        const visibility = mainWidth;
+        
+        // Camera center calculation (from choose_center in fruitbot.cpp)
+        const centerX = mainWidth / 2.0;
+        const centerY = agentY + mainWidth / 2.0 - 2 * 0.25;  // agent->ry is typically 0.25
+        
+        // Calculate unit scale (from prepare_for_drawing)
+        const rawUnit = res / visibility;
+        const viewDim = res / rawUnit;
+        
+        // Calculate offsets
+        const xOff = rawUnit * (centerX - viewDim / 2);
+        const yOff = rawUnit * (centerY - viewDim / 2);
+        
+        // Convert world to screen coordinates
+        // Note: Y is inverted (viewDim - y) because screen Y increases downward
+        let pixelX = worldX * rawUnit - xOff;
+        let pixelY = (viewDim - worldY) * rawUnit + yOff;
+        
+        // Scale from 64x64 to canvas size
+        pixelX = (pixelX / res) * canvasWidth;
+        pixelY = (pixelY / res) * canvasHeight;
+        
+        return { x: pixelX, y: pixelY };
+    }
+
+    function drawCollisionMarkers(ctx, collisions, currentStep) {
+        if (!collisions || collisions.length === 0) return;
+        
+        const canvasWidth = ctx.canvas.width;
+        const canvasHeight = ctx.canvas.height;
+        
+        ctx.save();
+        
+        // Draw X marks for all collisions up to current step
+        collisions.forEach(collision => {
+            if (collision.step <= currentStep) {
+                // Convert world coordinates to pixel coordinates
+                const pos = worldToPixel(
+                    collision.world_x,
+                    collision.world_y,
+                    collision.agent_y,
+                    canvasWidth,
+                    canvasHeight
+                );
+                const x = pos.x;
+                const y = pos.y;
+                
+                const size = 8;  // Size of the X mark
+                
+                // Color based on collision type
+                if (collision.type === 7) {
+                    // GOOD_OBJ (fruit) - green X
+                    ctx.strokeStyle = 'rgba(251, 255, 0, 0.9)';
+                    ctx.lineWidth = 3;
+                } else if (collision.type === 4) {
+                    // BAD_OBJ (vegetable) - red X
+                    ctx.strokeStyle = 'rgba(251, 255, 0, 0.9)';
+                    ctx.lineWidth = 3;
+                } else if (collision.type === 1 || collision.type === 10) {
+                    // BARRIER or LOCKED_DOOR - orange X
+                    ctx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
+                    ctx.lineWidth = 3;
+                } else {
+                    // Other collisions - white X
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.lineWidth = 2;
+                }
+                
+                // Draw X mark
+                ctx.beginPath();
+                ctx.moveTo(x - size, y - size);
+                ctx.lineTo(x + size, y + size);
+                ctx.moveTo(x + size, y - size);
+                ctx.lineTo(x - size, y + size);
+                ctx.stroke();
+            }
+        });
+        
+        ctx.restore();
+    }
+
     // --- ACTION DROPDOWN ---
     function populateActionDropdown() {
         actionDropdown.innerHTML = '';
@@ -303,11 +405,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 const symbolY = canvasHeight - (canvasHeight / 10);
                 
                 // Get x position from episode data, or use center as fallback
-                const symbolX = episodePositions[index] !== undefined 
+                let symbolX = episodePositions[index] !== undefined 
                     ? episodePositions[index] 
                     : canvases.overviewCanvas.width / 2;
                 
+                // Shift arrow based on action direction
+                const shiftAmount = 20; // pixels to shift
+                if (displayAction === 0) { // LEFT
+                    symbolX -= shiftAmount;
+                } else if (displayAction === 2) { // RIGHT
+                    symbolX += shiftAmount;
+                }
+                
                 drawActionSymbol(ctx, displayAction, symbolX, symbolY, 40);
+                
+                // Draw collision markers for all collisions up to current step
+                // drawCollisionMarkers(ctx, episodeCollisions, index);
             }, 100);
         }
 
@@ -323,8 +436,9 @@ document.addEventListener('DOMContentLoaded', () => {
     buttons.startGame.addEventListener('click', () => {
         console.log('[startGame] Button clicked');
         console.log('[startGame] Player name:', playerName);
+        console.log('[startGame] Player group:', group);
         console.log('[startGame] Emitting start_game event');
-        socket.emit('start_game', { playerName: playerName });
+        socket.emit('start_game', { playerName: playerName, group: group });
         showPage('agentPlay');
         console.log('[startGame] Switched to agentPlay page');
     });
@@ -348,8 +462,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (currentActionIndex < episodeActions.length - 1) {
                 showOverviewAction(currentActionIndex + 1);
             } else {
-                // Reached end, reset to beginning and continue playing
-                showOverviewAction(0);
+                // Reached end, stop playing
+                stopPlayback();
             }
         }, 100); // 0.1 seconds per frame
     });
@@ -448,10 +562,19 @@ document.addEventListener('DOMContentLoaded', () => {
         resetAgentPlayPage();
     });
 
+    // Button handler for similarity level 0 - continue to next episode after agent update
+    buttons.continueNextEpisode.addEventListener('click', () => {
+        console.log('[continueNextEpisode] Continuing to next episode after agent update (similarity level 0)');
+        socket.emit('next_episode', { playerName: playerName });
+        showPage('agentPlay');
+        resetAgentPlayPage();
+    });
+
     function resetAgentPlayPage() {
         episodeImages = [];
         episodeActions = [];
         episodePositions = [];  // Reset positions
+        episodeCollisions = [];  // Reset collisions
         currentActionIndex = 0;
         userFeedback = [];
         totalScore = 0;
@@ -531,6 +654,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.images) episodeImages.push(...data.images);
         if (data.actions) episodeActions.push(...data.actions);
         if (data.positions) episodePositions.push(...data.positions);
+        if (data.collisions) episodeCollisions = data.collisions;  // Replace with latest
         if (data.score !== undefined) totalScore = data.score;
         
         if (totalScoreElement) {
@@ -569,6 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
             episodeImages = data.images || [];
             episodeActions = data.actions || [];
             episodePositions = data.positions || [];
+            episodeCollisions = data.collisions || [];  // Add collisions
             totalScore = data.score || 0;
             
             if (totalScoreElement) {
@@ -632,13 +757,24 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('compare_agents', (data) => {
         console.log('[compare_agents] ===== RECEIVED =====');
         console.log('[compare_agents] Data keys:', Object.keys(data));
-        console.log('[compare_agents] Has rawImage1:', !!data.rawImage1);
-        console.log('[compare_agents] Has rawImage2:', !!data.rawImage2);
+        console.log('[compare_agents] Similarity level:', data.similarity_level);
+        console.log('[compare_agents] Agent updated:', data.agent_updated);
+        console.log('[compare_agents] Has rawImageUpdate:', !!data.rawImageUpdated);
+        console.log('[compare_agents] Has rawImagePrev:', !!data.rawImagePrev);
         
         // Hide loading screen
         hideLoading();
         
-        if (data.rawImage1 && data.rawImage2) {
+        // Check if this is a similarity level 0 response (no comparison)
+        if (data.similarity_level === 0 && data.agent_updated) {
+            console.log('[compare_agents] Similarity level 0 - showing confirmation page');
+            showPage('agent-updated');
+            console.log('[compare_agents] Switched to agent-updated page');
+            console.log('[compare_agents] ===== END =====');
+            return;
+        }
+        
+        if (data.rawImageUpdated && data.rawImagePrev) {
             console.log('[compare_agents] Setting image sources at original size');
             
             // Create new images to get dimensions
@@ -654,11 +790,12 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             
             // Set sources - images will maintain original proportions
-            img1.src = 'data:image/png;base64,' + data.rawImage1;
-            img2.src = 'data:image/png;base64,' + data.rawImage2;
+            img1.src = 'data:image/png;base64,' + data.rawImageUpdated;
+            img2.src = 'data:image/png;base64,' + data.rawImagePrev;
             
-            previousAgentImage.src = img1.src;
-            updatedAgentImage.src = img2.src;
+            updatedAgentImage.src = img1.src;
+            previousAgentImage.src = img2.src;
+            
             
             // Show compare page after images are set
             showPage('compare');

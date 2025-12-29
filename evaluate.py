@@ -274,7 +274,7 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=10, help="Number of episodes to evaluate")
     parser.add_argument("--render", action="store_true", help="Render the gameplay in a window")
     parser.add_argument("--delay", type=float, default=0.03, help="Delay between frames when rendering (seconds)")
-    parser.add_argument("--distribution-mode", type=str, default="hard", choices=["easy", "hard", "extreme", "memory", "exploration"])
+    parser.add_argument("--distribution-mode", type=str, default="easy", choices=["easy", "hard", "extreme", "memory", "exploration"])
     parser.add_argument("--num-levels", type=int, default=0, help="Number of levels (0 = unlimited)")
     parser.add_argument("--start-level", type=int, default=0, help="Start level seed")
     parser.add_argument("--compile", action="store_true", help="Compile the Procgen environment from source")
@@ -286,7 +286,7 @@ def main() -> None:
     parser.add_argument("--fruitbot-reward-wall-hit", type=float, default=-2.0, help="FruitBot: penalty for hitting walls/doors")
     parser.add_argument("--fruitbot-reward-step", type=float, default=0.0, help="FruitBot: small reward for each step (encourages survival)")
     parser.add_argument("--fast", action="store_true", help="Use fast parallel evaluation (no rendering)")
-    parser.add_argument("--num-parallel", type=int, default=16, help="Number of parallel environments for fast evaluation")
+    parser.add_argument("--num-parallel", type=int, default=8, help="Number of parallel environments for fast evaluation")
 
     
     args = parser.parse_args()
@@ -339,13 +339,13 @@ def main() -> None:
     env_kwargs["stay_bonus"] = 0
     
     # environment structuring
-    env_kwargs['fruitbot_num_walls'] = 4
-    env_kwargs['fruitbot_num_good_min'] = 4
+    env_kwargs['fruitbot_num_walls'] = 3
+    env_kwargs['fruitbot_num_good_min'] = 5
     env_kwargs['fruitbot_num_good_range'] = 1
-    env_kwargs['fruitbot_num_bad_min'] = 4
+    env_kwargs['fruitbot_num_bad_min'] = 5
     env_kwargs['fruitbot_num_bad_range'] = 1
-    env_kwargs['fruitbot_wall_gap_pct'] = 60
-    env_kwargs['fruitbot_door_prob_pct'] = 0
+    env_kwargs['fruitbot_wall_gap_pct'] = 30
+    env_kwargs['fruitbot_door_prob_pct'] = 20 #if args.distribution_mode in ['hard', 'extreme'] else 0
     env_kwargs['food_diversity'] = 2
 
     if args.compile:

@@ -39,6 +39,7 @@ RUN python setup.py install
 # Copy application files
 COPY app.py .
 COPY dpu_clf.py .
+COPY common/ ./common/
 COPY static/ ./static/
 COPY templates/ ./templates/
 COPY models/ ./models/

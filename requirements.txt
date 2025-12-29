@@ -27,9 +27,13 @@ seaborn==0.13.0
 Pillow==10.1.0
 plotly==5.18.0
 
-# Experiment Tracking (Optional)
-# wandb==0.16.0
-# tensorboardX==2.6.2.2
+# Experiment Tracking
+wandb==0.16.1
+tensorboardX==2.6.2.2
+
+# Hyperparameter Optimization
+optuna==3.5.0
+optuna-dashboard==0.15.1
 
 # Utilities
 tqdm==4.66.1

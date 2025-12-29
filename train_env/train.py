@@ -63,6 +63,14 @@ except Exception as e:
         f"Original import error: {e}"
     )
 
+# Optional wandb integration
+try:
+    import wandb
+    from wandb.integration.sb3 import WandbCallback
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 # Ensure procgen envs are registered with gym on import
 import procgen  # noqa: F401
 try:
@@ -92,7 +100,8 @@ def make_env_fn(
         if use_source and pg_make_env is not None:
             try:
                 env = pg_make_env(render_mode=render_mode, **kwargs)
-            except Exception:
+            except Exception as e:
+                print(f"Warning: pg_make_env failed: {e}")
                 env = None
 
         if env is None:
@@ -103,6 +112,12 @@ def make_env_fn(
                         env.render_mode = render_mode
                     except Exception:
                         pass
+            elif gym is not None:
+                # Try without procgen: prefix
+                env = gym.make(env_id, render_mode=render_mode, **kwargs)
+        
+        if env is None:
+            raise RuntimeError(f"Failed to create environment: {env_id}")
         
         env = Monitor(env)
         
@@ -156,16 +171,16 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train PPO on Procgen")
     p.add_argument("--env", default="fruitbot", help="Procgen env name, e.g., fruitbot, coinrun, jumper")
     p.add_argument("--total-steps", type=int, default=1_000_000, help="Total training timesteps")
-    p.add_argument("--n-envs", type=int, default=32, help="Number of parallel envs (use 1 on low-end/Windows if needed)")
-    p.add_argument("--n-steps", type=int, default=256, help="PPO n_steps")
+    p.add_argument("--n-envs", type=int, default=24, help="Number of parallel envs (use 1 on low-end/Windows if needed)")
+    p.add_argument("--n-steps", type=int, default=512, help="PPO n_steps")
     p.add_argument("--batch-size", type=int, default=256, help="PPO batch_size")
-    p.add_argument("--learning-rate", type=float, default=1e-3, help="PPO learning rate")
-    p.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
+    p.add_argument("--learning-rate", type=float, default=5e-4, help="PPO learning rate")
+    p.add_argument("--gamma", type=float, default=0.97, help="Discount factor")
     p.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
-    p.add_argument("--clip-range", type=float, default=0.3, help="Policy clip range")
+    p.add_argument("--clip-range", type=float, default=0.2, help="Policy clip range")
     p.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient")
-    p.add_argument("--vf-coef", type=float, default=0.5, help="Value function coefficient")
-    p.add_argument("--max-grad-norm", type=float, default=0.5, help="Gradient clipping")
+    p.add_argument("--vf-coef", type=float, default=0.37, help="Value function coefficient")
+    p.add_argument("--max-grad-norm", type=float, default=0.6, help="Gradient clipping")
     p.add_argument("--seed", type=int, default=0, help="Random seed")
     p.add_argument("--device", type=str, default="auto", help="PyTorch device: auto/cpu/cuda")
     p.add_argument("--save-freq", type=int, default=200_000, help="Checkpoint save frequency (timesteps)")
@@ -173,7 +188,7 @@ def parse_args():
     p.add_argument("--use-gymnasium", action="store_true", default=False, help="Use gymnasium instead of gym if available")
     p.add_argument("--use-source", action="store_true", default=False, help="Build envs from procgen source (only needed for C++ development)")
     # Procgen-specific knobs
-    p.add_argument("--distribution-mode", type=str, default="hard", choices=["easy","hard","extreme","memory","exploration"], help="Procgen difficulty mode")
+    p.add_argument("--distribution-mode", type=str, default="easy", choices=["easy","hard","extreme","memory","exploration"], help="Procgen difficulty mode")
     p.add_argument("--num-levels", type=int, default=0, help="Number of levels (0 = unlimited)")
     p.add_argument("--start-level", type=int, default=0, help="Start level (seed offset)")
     p.add_argument("--use-sequential-levels", action="store_true", help="Use sequential instead of random levels")
@@ -182,8 +197,14 @@ def parse_args():
     p.add_argument("--fruitbot-reward-completion", type=float, default=10.0, help="FruitBot: reward for reaching the goal")
     p.add_argument("--fruitbot-reward-positive", type=float, default=2.0, help="FruitBot: reward for collecting good fruit")
     p.add_argument("--fruitbot-reward-negative", type=float, default=-1.0, help="FruitBot: penalty for touching bad food")
-    p.add_argument("--fruitbot-reward-wall-hit", type=float, default=-2.0, help="FruitBot: penalty for hitting walls/doors")
+    p.add_argument("--fruitbot-reward-wall-hit", type=float, default=-3.0, help="FruitBot: penalty for hitting walls/doors")
     p.add_argument("--fruitbot-reward-step", type=float, default=0.0, help="FruitBot: small reward for each step (encourages survival)")
+    # Wandb integration
+    p.add_argument("--wandb-project", type=str, default=None, help="Weights & Biases project name")
+    p.add_argument("--wandb-run-name", type=str, default=None, help="Weights & Biases run name")
+    p.add_argument("--wandb-tags", type=str, nargs="*", default=None, help="Weights & Biases tags")
+    # GPU optimization
+    p.add_argument("--n-epochs", type=int, default=10, help="Number of PPO epochs per update")
     return p.parse_args()
 
 
@@ -202,6 +223,31 @@ def main():
     try:
         import torch
         torch.manual_seed(args.seed)
+        
+        # Display GPU/CPU device information
+        print("\n" + "="*60)
+        print("TRAINING DEVICE CONFIGURATION")
+        print("="*60)
+        if args.device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Device mode: auto -> {device}")
+        else:
+            device = args.device
+            print(f"Device mode: {device} (manually specified)")
+        
+        if torch.cuda.is_available():
+            print(f"[OK] CUDA available: YES")
+            print(f"  - GPU device count: {torch.cuda.device_count()}")
+            print(f"  - GPU device name: {torch.cuda.get_device_name(0)}")
+            print(f"  - CUDA version: {torch.version.cuda}")
+            if device == "cpu":
+                print("  [WARNING] CUDA is available but training on CPU")
+        else:
+            print(f"[X] CUDA available: NO")
+            print(f"  - Training will use CPU (slower)")
+            if device == "cuda":
+                print("  [ERROR] CUDA requested but not available!")
+        print("="*60 + "\n")
     except Exception:
         pass
 
@@ -227,13 +273,13 @@ def main():
         env_kwargs["use_discrete_action_wrapper"] = True
         env_kwargs["use_stay_bonus_wrapper"] = True
         env_kwargs["stay_bonus"] = 0.1
-        env_kwargs['fruitbot_num_walls'] = 5
+        env_kwargs['fruitbot_num_walls'] = 3
         env_kwargs['fruitbot_num_good_min'] = 7
         env_kwargs['fruitbot_num_good_range'] = 1
         env_kwargs['fruitbot_num_bad_min'] = 7
         env_kwargs['fruitbot_num_bad_range'] = 1
         env_kwargs['fruitbot_wall_gap_pct'] = 50
-        env_kwargs['fruitbot_door_prob_pct'] = 0
+        env_kwargs['fruitbot_door_prob_pct'] = 30
         env_kwargs['food_diversity'] = 2
 
         print(f"\nFruitBot Reward Configuration:")
@@ -244,7 +290,9 @@ def main():
         print(f"  Step reward: {args.fruitbot_reward_step}")
         print()
 
-    use_subproc = args.n_envs > 1 and os.name != "nt"
+    # Use SubprocVecEnv for parallel environments (much faster on Windows!)
+    # Changed: Force SubprocVecEnv on Windows for better parallelization
+    use_subproc = args.n_envs > 1  # Removed Windows check - SubprocVecEnv works fine now
     make_thunk = make_env_fn(
         env_id,
         render_mode=None,
@@ -255,7 +303,7 @@ def main():
 
     if use_subproc:
         venv = SubprocVecEnv([
-            make_env_fn(env_id, use_gymnasium=args.use_gymnasium, use_source=args.use_source, **env_kwargs)
+            make_env_fn(env_id, render_mode=None, use_gymnasium=args.use_gymnasium, use_source=args.use_source, **env_kwargs)
             for _ in range(args.n_envs)
         ])
     else:
@@ -291,6 +339,7 @@ def main():
             learning_rate=args.learning_rate,
             n_steps=args.n_steps,
             batch_size=args.batch_size,
+            n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
             clip_range=args.clip_range,
@@ -300,21 +349,86 @@ def main():
             seed=args.seed,
             device=args.device,
             verbose=1,
+            tensorboard_log=str(save_dir / "tensorboard"),
         )
 
-    checkpoint_cb = CheckpointCallback(
-        save_freq=args.save_freq // max(1, args.n_envs),
-        save_path=str(save_dir),
-        save_vecnormalize=False,
-        save_replay_buffer=False,
-        name_prefix="ppo",
-    )
+    # Setup callbacks
+    callbacks = []
+    
+    # Checkpoint callback - disabled to only save final model
+    # checkpoint_cb = CheckpointCallback(
+    #     save_freq=args.save_freq // max(1, args.n_envs),
+    #     save_path=str(save_dir),
+    #     save_vecnormalize=False,
+    #     save_replay_buffer=False,
+    #     name_prefix="ppo",
+    # )
+    # callbacks.append(checkpoint_cb)
+    
+    # Wandb callback
+    if args.wandb_project and WANDB_AVAILABLE:
+        wandb_run_name = args.wandb_run_name or f"{args.env}_{timestamp}"
+        wandb_config = {
+            'env': args.env,
+            'total_steps': args.total_steps,
+            'n_envs': args.n_envs,
+            'n_steps': args.n_steps,
+            'batch_size': args.batch_size,
+            'learning_rate': args.learning_rate,
+            'gamma': args.gamma,
+            'gae_lambda': args.gae_lambda,
+            'clip_range': args.clip_range,
+            'ent_coef': args.ent_coef,
+            'vf_coef': args.vf_coef,
+            'max_grad_norm': args.max_grad_norm,
+            'n_epochs': args.n_epochs,
+            'distribution_mode': args.distribution_mode,
+            'num_levels': args.num_levels,
+            'device': args.device,
+        }
+        
+        if args.env == 'fruitbot':
+            wandb_config.update({
+                'fruitbot_reward_completion': args.fruitbot_reward_completion,
+                'fruitbot_reward_positive': args.fruitbot_reward_positive,
+                'fruitbot_reward_negative': args.fruitbot_reward_negative,
+                'fruitbot_reward_wall_hit': args.fruitbot_reward_wall_hit,
+                'fruitbot_reward_step': args.fruitbot_reward_step,
+            })
+        
+        wandb.init(
+            project=args.wandb_project,
+            name=wandb_run_name,
+            tags=args.wandb_tags,
+            config=wandb_config,
+            sync_tensorboard=True,
+            monitor_gym=True,
+            save_code=True,
+        )
+        
+        wandb_cb = WandbCallback(
+            model_save_path=str(save_dir / "wandb"),
+            verbose=2,
+        )
+        callbacks.append(wandb_cb)
+        
+        print(f"\n[OK] Weights & Biases logging enabled")
+        print(f"   Project: {args.wandb_project}")
+        print(f"   Run: {wandb_run_name}")
+        print(f"   URL: {wandb.run.url}\n")
+    elif args.wandb_project and not WANDB_AVAILABLE:
+        print(f"\n[WARNING] --wandb-project specified but wandb not installed")
+        print(f"   Install with: pip install wandb\n")
 
-    model.learn(total_timesteps=args.total_steps, progress_bar=True, callback=checkpoint_cb)
+    model.learn(total_timesteps=args.total_steps, progress_bar=True, callback=callbacks)
 
     final_path = save_dir / "ppo_final"
     model.save(str(final_path))
     print(f"Training complete. Saved checkpoints in: {save_dir}")
+    
+    # Close wandb run
+    if args.wandb_project and WANDB_AVAILABLE:
+        wandb.finish()
 
 
 if __name__ == "__main__":
