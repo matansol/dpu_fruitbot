@@ -18,6 +18,15 @@ document.addEventListener('DOMContentLoaded', () => {
         agentUpdated: document.getElementById('agent-updated-page')
     };
 
+    // DEBUG: Check if all pages were found
+    console.log('[DEBUG] Page elements loaded:', {
+        welcome: !!pages.welcome,
+        agentPlay: !!pages.agentPlay,
+        overview: !!pages.overview,
+        compare: !!pages.compare,
+        agentUpdated: !!pages.agentUpdated
+    });
+
     const buttons = {
         startGame: document.getElementById('btn-start-game'),
         playVideo: document.getElementById('btn-play-video'),
@@ -52,12 +61,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
         const prolificId = urlParams.get('prolificId');
         const group = urlParams.get('group', 0);
-        
+
         if (prolificId) {
             console.log('Prolific ID:', prolificId);
             return prolificId;
         }
-        
+
         // Generate random number between 1 and 100
         const randomId = Math.floor(Math.random() * 100) + 1;
         console.log('Generated random player ID:', randomId);
@@ -67,12 +76,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function getPlayerGroupFromURL() {
         const urlParams = new URLSearchParams(window.location.search);
         const group = urlParams.get('group');
-        
+
         if (group) {
             console.log('Group:', group);
             return group;
         }
-        
+
         console.log('could not find group, return default value=1');
         return 1;
     }
@@ -104,13 +113,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- PAGE NAVIGATION ---
     function showPage(pageName) {
-        console.log('Showing page:', pageName);
+        console.log('[DEBUG] showPage called with:', pageName);
+        console.log('[DEBUG] Available pages:', Object.keys(pages));
+
         Object.values(pages).forEach(page => {
-            page.classList.remove('active');
+            if (page) page.classList.remove('active');
         });
+
         if (pages[pageName]) {
+            console.log(`[DEBUG] Activating page: ${pageName}`);
             pages[pageName].classList.add('active');
             currentPage = pageName;
+        } else {
+            console.error(`[DEBUG] ERROR: Page '${pageName}' not found in pages object!`);
         }
     }
 
@@ -122,20 +137,20 @@ document.addEventListener('DOMContentLoaded', () => {
             imageDataLength: base64Image?.length,
             imagePrefix: base64Image?.substring(0, 50)
         });
-        
+
         if (!canvas) {
             console.error('[drawImageOnCanvas] Canvas is null or undefined');
             return;
         }
-        
+
         if (!base64Image) {
             console.error('[drawImageOnCanvas] base64Image is null or undefined');
             return;
         }
-        
+
         const ctx = canvas.getContext('2d');
         const img = new Image();
-        
+
         img.onload = () => {
             console.log('[drawImageOnCanvas] Image loaded successfully:', {
                 canvasId: canvas.id,
@@ -149,13 +164,13 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.drawImage(img, 0, 0);
             console.log('[drawImageOnCanvas] Image drawn to canvas');
         };
-        
+
         img.onerror = (error) => {
             console.error('[drawImageOnCanvas] Image failed to load:', error);
             console.error('[drawImageOnCanvas] Image src length:', img.src?.length);
             console.error('[drawImageOnCanvas] Image src prefix:', img.src?.substring(0, 100));
         };
-        
+
         img.src = 'data:image/jpeg;base64,' + base64Image;
         console.log('[drawImageOnCanvas] Image src set, loading...');
     }
@@ -166,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
             numImages: images?.length,
             fps: fps
         });
-        
+
         if (!canvas || !images || images.length === 0) {
             console.error('[playVideoSequence] Invalid canvas or images:', {
                 canvasExists: !!canvas,
@@ -197,13 +212,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 frameIndex++;
                 setTimeout(playFrame, interval);
             };
-            
+
             img.onerror = (error) => {
                 console.error(`[playVideoSequence] Frame ${frameIndex} failed to load:`, error);
                 frameIndex++;
                 setTimeout(playFrame, interval);
             };
-            
+
             img.src = 'data:image/jpeg;base64,' + images[frameIndex];
         };
 
@@ -220,9 +235,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.textBaseline = 'middle';
 
         let symbol = '';
-        switch(action) {
+        switch (action) {
             case 0: symbol = '←'; break;
-            case 1: symbol = '↑'; break;            
+            case 1: symbol = '↑'; break;
             case 2: symbol = '→'; break;
             // case 3: symbol = '!'; break;  // Throw - no symbol
             default: symbol = '';
@@ -238,39 +253,39 @@ document.addEventListener('DOMContentLoaded', () => {
     function worldToPixel(worldX, worldY, agentY, canvasWidth, canvasHeight, mainWidth = 10, mainHeight = 15, res = 64) {
         // FruitBot camera follows agent vertically
         const visibility = mainWidth;
-        
+
         // Camera center calculation (from choose_center in fruitbot.cpp)
         const centerX = mainWidth / 2.0;
         const centerY = agentY + mainWidth / 2.0 - 2 * 0.25;  // agent->ry is typically 0.25
-        
+
         // Calculate unit scale (from prepare_for_drawing)
         const rawUnit = res / visibility;
         const viewDim = res / rawUnit;
-        
+
         // Calculate offsets
         const xOff = rawUnit * (centerX - viewDim / 2);
         const yOff = rawUnit * (centerY - viewDim / 2);
-        
+
         // Convert world to screen coordinates
         // Note: Y is inverted (viewDim - y) because screen Y increases downward
         let pixelX = worldX * rawUnit - xOff;
         let pixelY = (viewDim - worldY) * rawUnit + yOff;
-        
+
         // Scale from 64x64 to canvas size
         pixelX = (pixelX / res) * canvasWidth;
         pixelY = (pixelY / res) * canvasHeight;
-        
+
         return { x: pixelX, y: pixelY };
     }
 
     function drawCollisionMarkers(ctx, collisions, currentStep) {
         if (!collisions || collisions.length === 0) return;
-        
+
         const canvasWidth = ctx.canvas.width;
         const canvasHeight = ctx.canvas.height;
-        
+
         ctx.save();
-        
+
         // Draw X marks for all collisions up to current step
         collisions.forEach(collision => {
             if (collision.step <= currentStep) {
@@ -284,9 +299,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
                 const x = pos.x;
                 const y = pos.y;
-                
+
                 const size = 8;  // Size of the X mark
-                
+
                 // Color based on collision type
                 if (collision.type === 7) {
                     // GOOD_OBJ (fruit) - green X
@@ -305,7 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
                     ctx.lineWidth = 2;
                 }
-                
+
                 // Draw X mark
                 ctx.beginPath();
                 ctx.moveTo(x - size, y - size);
@@ -315,7 +330,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ctx.stroke();
             }
         });
-        
+
         ctx.restore();
     }
 
@@ -325,14 +340,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentAgentAction = episodeActions[currentActionIndex];
         const feedback = userFeedback.find(f => f.index === currentActionIndex);
         const userSelectedAction = feedback ? feedback.feedback_action : null;
-        
+
         console.log('[populateActionDropdown] Current agent action:', currentAgentAction, 'User selected:', userSelectedAction);
-        
+
         Object.entries(ACTION_NAMES).forEach(([actionId, actionName]) => {
             const item = document.createElement('div');
             item.className = 'action-dropdown-item';
             const actionIdNum = parseInt(actionId);
-            
+
             // Mark current agent action
             if (actionIdNum === currentAgentAction) {
                 item.classList.add('current-agent-action');
@@ -340,12 +355,12 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 item.textContent = actionName;
             }
-            
+
             // Mark user-selected action with light blue background
             if (userSelectedAction !== null && actionIdNum === userSelectedAction) {
                 item.classList.add('user-selected');
             }
-            
+
             item.dataset.actionId = actionId;
             item.addEventListener('click', () => {
                 selectAction(actionIdNum);
@@ -357,7 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function selectAction(newActionId) {
         const originalAction = episodeActions[currentActionIndex];
-        
+
         // Record feedback
         const existingFeedback = userFeedback.find(f => f.index === currentActionIndex);
         if (existingFeedback) {
@@ -373,7 +388,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Update display
         actionText.textContent = ACTION_NAMES[newActionId];
         actionText.style.background = newActionId !== originalAction ? '#ffe6e6' : '#fff';
-        
+
         // Redraw overview with new action
         showOverviewAction(currentActionIndex);
     }
@@ -381,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- OVERVIEW PAGE LOGIC ---
     function showOverviewAction(index) {
         if (index < 0 || index >= episodeActions.length) return;
-        
+
         currentActionIndex = index;
         const action = episodeActions[index];
         const feedback = userFeedback.find(f => f.index === index);
@@ -395,20 +410,20 @@ document.addEventListener('DOMContentLoaded', () => {
         // Draw image with action symbol
         if (episodeImages[index]) {
             drawImageOnCanvas(canvases.overviewCanvas, episodeImages[index]);
-            
+
             // Draw action symbol overlay at bot position
             setTimeout(() => {
                 const ctx = canvases.overviewCanvas.getContext('2d');
                 const canvasHeight = canvases.overviewCanvas.height;
-                
+
                 // Position symbol at bottom 1/10 of canvas
                 const symbolY = canvasHeight - (canvasHeight / 10);
-                
+
                 // Get x position from episode data, or use center as fallback
-                let symbolX = episodePositions[index] !== undefined 
-                    ? episodePositions[index] 
+                let symbolX = episodePositions[index] !== undefined
+                    ? episodePositions[index]
                     : canvases.overviewCanvas.width / 2;
-                
+
                 // Shift arrow based on action direction
                 const shiftAmount = 20; // pixels to shift
                 if (displayAction === 0) { // LEFT
@@ -416,9 +431,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (displayAction === 2) { // RIGHT
                     symbolX += shiftAmount;
                 }
-                
+
                 drawActionSymbol(ctx, displayAction, symbolX, symbolY, 40);
-                
+
                 // Draw collision markers for all collisions up to current step
                 // drawCollisionMarkers(ctx, episodeCollisions, index);
             }, 100);
@@ -427,7 +442,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Update navigation buttons - always enabled for cycling
         buttons.prevAction.disabled = false;
         buttons.nextAction.disabled = false;
-        
+
         // Refresh dropdown to show current selections
         populateActionDropdown();
     }
@@ -453,11 +468,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     buttons.playSequence.addEventListener('click', () => {
         if (episodeActions.length === 0) return;
-        
+
         isPlaying = true;
         buttons.playSequence.style.display = 'none';
         buttons.pauseSequence.style.display = 'flex';
-        
+
         playbackInterval = setInterval(() => {
             if (currentActionIndex < episodeActions.length - 1) {
                 showOverviewAction(currentActionIndex + 1);
@@ -520,15 +535,15 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('No feedback provided. Please select different actions or click "No Feedback".');
             return;
         }
-        
+
         // Show loading screen
         showLoading();
         console.log('[updateAgent] Emitting compare_agents event');
-        
-        socket.emit('compare_agents', { 
+
+        socket.emit('compare_agents', {
             playerName: playerName,
             updateAgent: true,
-            userFeedback: userFeedback 
+            userFeedback: userFeedback
         });
     });
 
@@ -542,9 +557,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     buttons.usePrevious.addEventListener('click', () => {
         console.log('Use previous agent');
-        socket.emit('agent_select', { 
+        socket.emit('agent_select', {
             playerName: playerName,
-            use_updated: false 
+            use_updated: false
         });
         socket.emit('next_episode', { playerName: playerName });
         showPage('agentPlay');
@@ -553,9 +568,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     buttons.useUpdated.addEventListener('click', () => {
         console.log('Use updated agent');
-        socket.emit('agent_select', { 
+        socket.emit('agent_select', {
             playerName: playerName,
-            use_updated: true 
+            use_updated: true
         });
         socket.emit('next_episode', { playerName: playerName });
         showPage('agentPlay');
@@ -614,7 +629,7 @@ document.addEventListener('DOMContentLoaded', () => {
             imageLength: data.image?.length,
             imagePrefix: data.image?.substring(0, 50)
         });
-        
+
         if (data.image) {
             console.log('[game_update] Image data present, length:', data.image.length);
             console.log('[game_update] Calling drawImageOnCanvas for agent-video');
@@ -625,17 +640,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 offsetWidth: canvases.agentVideo?.offsetWidth,
                 offsetHeight: canvases.agentVideo?.offsetHeight
             });
-            
+
             drawImageOnCanvas(canvases.agentVideo, data.image);
         } else {
             console.error('[game_update] NO IMAGE DATA in response!');
         }
-        
+
         if (data.score !== undefined && totalScoreElement) {
             console.log('[game_update] Updating score to:', data.score);
             totalScoreElement.textContent = data.score;
         }
-        
+
         console.log('[game_update] ===== END =====');
     });
 
@@ -649,14 +664,14 @@ document.addEventListener('DOMContentLoaded', () => {
             isFinal: data.is_final,
             score: data.score
         });
-        
+
         // Append new batch data to existing arrays
         if (data.images) episodeImages.push(...data.images);
         if (data.actions) episodeActions.push(...data.actions);
         if (data.positions) episodePositions.push(...data.positions);
         if (data.collisions) episodeCollisions = data.collisions;  // Replace with latest
         if (data.score !== undefined) totalScore = data.score;
-        
+
         if (totalScoreElement) {
             totalScoreElement.textContent = totalScore.toFixed(1);
         }
@@ -676,7 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             console.log('[episode_batch] Batch accumulated, waiting for more...');
         }
-        
+
         console.log('[episode_batch] ===== END =====');
     });
 
@@ -686,7 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('[episode_data] Images array length:', data.images?.length);
         console.log('[episode_data] Actions array length:', data.actions?.length);
         console.log('[episode_data] Positions array length:', data.positions?.length);
-        
+
         // Only use episode_data if we haven't received batches
         // (backwards compatibility or fallback)
         if (episodeImages.length === 0) {
@@ -695,7 +710,7 @@ document.addEventListener('DOMContentLoaded', () => {
             episodePositions = data.positions || [];
             episodeCollisions = data.collisions || [];  // Add collisions
             totalScore = data.score || 0;
-            
+
             if (totalScoreElement) {
                 totalScoreElement.textContent = totalScore.toFixed(1);
             }
@@ -742,13 +757,13 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('disconnect', () => {
         console.log('[socket] ===== DISCONNECTED FROM SERVER =====');
     });
-    
+
     socket.on('error', (data) => {
         console.error('[socket] ===== ERROR FROM SERVER =====');
         console.error('[socket] Error data:', data);
         alert(`Server error: ${data.message || data.error || 'Unknown error'}`);
     });
-    
+
     socket.on('connect_error', (error) => {
         console.error('[socket] ===== CONNECTION ERROR =====');
         console.error('[socket] Error:', error);
@@ -761,42 +776,43 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('[compare_agents] Agent updated:', data.agent_updated);
         console.log('[compare_agents] Has rawImageUpdate:', !!data.rawImageUpdated);
         console.log('[compare_agents] Has rawImagePrev:', !!data.rawImagePrev);
-        
+
         // Hide loading screen
         hideLoading();
-        
+
         // Check if this is a similarity level 0 response (no comparison)
         if (data.similarity_level === 0 && data.agent_updated) {
             console.log('[compare_agents] Similarity level 0 - showing confirmation page');
-            showPage('agent-updated');
+            console.log('[DEBUG] Attempting to show agentUpdated page');
+            showPage('agentUpdated');
             console.log('[compare_agents] Switched to agent-updated page');
             console.log('[compare_agents] ===== END =====');
             return;
         }
-        
+
         if (data.rawImageUpdated && data.rawImagePrev) {
             console.log('[compare_agents] Setting image sources at original size');
-            
+
             // Create new images to get dimensions
             const img1 = new Image();
             const img2 = new Image();
-            
+
             img1.onload = () => {
                 console.log('[compare_agents] Previous agent image loaded:', img1.width, 'x', img1.height);
             };
-            
+
             img2.onload = () => {
                 console.log('[compare_agents] Updated agent image loaded:', img2.width, 'x', img2.height);
             };
-            
+
             // Set sources - images will maintain original proportions
             img1.src = 'data:image/png;base64,' + data.rawImageUpdated;
             img2.src = 'data:image/png;base64,' + data.rawImagePrev;
-            
+
             updatedAgentImage.src = img1.src;
             previousAgentImage.src = img2.src;
-            
-            
+
+
             // Show compare page after images are set
             showPage('compare');
             console.log('[compare_agents] Switched to compare page');
@@ -804,7 +820,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('[compare_agents] Missing image data in response');
             alert('Failed to load comparison images. Please try again.');
         }
-        
+
         console.log('[compare_agents] ===== END =====');
     });
 
@@ -817,7 +833,7 @@ document.addEventListener('DOMContentLoaded', () => {
         previousVideo: !!canvases.previousVideo,
         updatedVideo: !!canvases.updatedVideo
     });
-    
+
     populateActionDropdown();
     showPage('welcome');
     console.log('[init] Initialization complete');

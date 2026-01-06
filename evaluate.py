@@ -285,6 +285,7 @@ def main() -> None:
     parser.add_argument("--fruitbot-reward-negative", type=float, default=-1.0, help="FruitBot: penalty for touching bad food")
     parser.add_argument("--fruitbot-reward-wall-hit", type=float, default=-2.0, help="FruitBot: penalty for hitting walls/doors")
     parser.add_argument("--fruitbot-reward-step", type=float, default=0.0, help="FruitBot: small reward for each step (encourages survival)")
+    parser.add_argument("--fruitbot-door-percentage", type=int, default=0, help="FruitBot: the percentage of walls with doors")
     parser.add_argument("--fast", action="store_true", help="Use fast parallel evaluation (no rendering)")
     parser.add_argument("--num-parallel", type=int, default=8, help="Number of parallel environments for fast evaluation")
 
@@ -340,13 +341,14 @@ def main() -> None:
     
     # environment structuring
     env_kwargs['fruitbot_num_walls'] = 3
-    env_kwargs['fruitbot_num_good_min'] = 5
+    env_kwargs['fruitbot_num_good_min'] = 3
     env_kwargs['fruitbot_num_good_range'] = 1
-    env_kwargs['fruitbot_num_bad_min'] = 5
+    env_kwargs['fruitbot_num_bad_min'] = 3
     env_kwargs['fruitbot_num_bad_range'] = 1
-    env_kwargs['fruitbot_wall_gap_pct'] = 30
-    env_kwargs['fruitbot_door_prob_pct'] = 20 #if args.distribution_mode in ['hard', 'extreme'] else 0
-    env_kwargs['food_diversity'] = 2
+    env_kwargs['fruitbot_wall_gap_pct'] = 40
+    env_kwargs["fruitbot_door_prob_pct"] = args.fruitbot_door_percentage
+    env_kwargs['food_diversity'] = 6
+
 
     if args.compile:
         print("Compiling Procgen environment from source...")

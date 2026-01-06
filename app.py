@@ -248,7 +248,7 @@ class GameControl:
                 'fruitbot_num_good_range': 5,
                 'fruitbot_num_bad_min': 5,
                 'fruitbot_num_bad_range': 5,
-                'fruitbot_wall_gap_pct': 90,
+                'fruitbot_wall_gap_pct': 95,
                 'fruitbot_door_prob_pct': 0,
                 'food_diversity': 4,
                 'use_discrete_action_wrapper': True,
@@ -867,6 +867,8 @@ class GameControl:
         finally:
             session.close()
         
+
+
 # ---------------- Global Variables ----------------
 
 game_controls: Dict[str, GameControl] = {}
@@ -874,8 +876,20 @@ sid_to_user: Dict[str, str] = {}
 
 # Procgen Fruitbot models configuration
 
-# models\fruitbot\20251213-212435_easy\ppo_final.zip - לא נתקע ולא מתאמץ לקחת או מתחמק
-# נתקע לא מעט, מנסה להתחמק מהכל - models\fruitbot\20251203-132922_easy\ppo_final.zip
+""" 
+    - stupied agent dont alsway avoid walls and randomly takes food
+    - avoid walls and randomly collect food
+    - donot open doors and collect all food
+    - donot open doors and collect only fruits
+    - collect only fruits on the expense of avoiding walls
+    - open doors and collect all foods
+    - open doors and avoid all foods
+    - open doors and collect only fruits
+
+
+    models\fruitbot\20260103-151117_easy\ppo_final.zip - open 1/2 doors and collect only junk
+    
+"""
 
 models_dict = {
     0: {'path': "models/fruitbot/20251222-161336_easy/ppo_final.zip", 'name': 'Agent0'},
@@ -884,6 +898,21 @@ models_dict = {
     3: {'path': "models/fruitbot/20251130-001800_easy/ppo_final.zip", 'name': 'Agent3'},
     4: {'path': "models/fruitbot/20251203-132922_easy/ppo_final.zip", 'name': 'Agent4'}, # avoid all
     5: {'path': "models/fruitbot/20251224-133036_easy/ppo_final.zip", 'name': 'Agent5'}, 
+}
+
+easy_models_dict = {
+    0: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'name': 'Agent0'}, # stupid agent
+    1: {'path': "models/fruitbot/20251222-194508_easy/ppo_final.zip", 'name': 'Agent1'}, # evaid walls and randomly collect food
+    2: {'path': "models/fruitbot/20251225-083104_easy/ppo_final.zip", 'name': 'Agent2'}, # donot open doors and collect only fruits
+    4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'name': 'Agent4'}, # open doors (-) and collect only fruits 
+
+    5: {"path": "models/fruitbot/20251130-001800_easy/ppo_final.zip", 'name': 'Agent5'}, # avoid walls, collect some food and throw randomly keys
+    6: {"path": "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'name':'Agent6'}, # open 1/2 the doors, do not collct any food
+    7: {"path": "models/fruitbot/20260105-075949_easy/ppo_final.zip", "name": 'Agent7'}, # open most doors, collect fruits only
+}
+
+hard_models_dict = {
+    0: {'path': "models/fruitbot/20251227-205223_hard/ppo_final.zip", 'name': 'Agent0'}, # collect only fruits do not open doors
 }
 
 # for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
@@ -948,27 +977,6 @@ action_dir = {
     "ArrowDown": "pass",
 }
 
-
-# ------------------ UTILITY FUNCTION -----------------------------
-# async def finish_turn(
-#     response: Dict[str, Any],
-#     user_game: GameControl,
-#     sid: str,
-#     need_feedback_data: bool = True
-# ) -> None:
-#     """Common logic after an action is processed."""
-#     if response["done"]:
-#         summary = user_game.end_of_episode_summary(need_feedback_data)
-        
-#         # Create video from episode frames
-#         video_path = user_game.create_episode_video()
-#         if video_path:
-#             summary['video_path'] = video_path
-        
-#         # Send the summary to the front-end:
-#         await sio.emit("episode_finished", summary, to=sid)
-#     else:
-#         await sio.emit("game_update", response, to=sid)
 
 # -------------------- FASTAPI ROUTES ----------------------------
 templates = Jinja2Templates(directory="templates")
@@ -1198,7 +1206,8 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
     
     # Bot tracking
     cx = 230  # Starting x position
-    cx = dpu_clf.find_x_on_row(user_game.episode_frames[0]) + 15
+    if len(user_game.episode_frames) > 0:
+        cx = dpu_clf.find_x_on_row(user_game.episode_frames[0]) + 15
     move_size = 35  # Movement amount per action
     
     # Streaming configuration
@@ -1211,8 +1220,6 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         # Get action from agent
         action, _ = user_game.ppo_agent.predict(user_game.current_obs, deterministic=True)
         action = action.item() if hasattr(action, 'item') else int(action)
-        # if action == 3:
-        #     action = 1  # Replace THROW with NOOP
         
         # Step environment
         result = user_game.step(action)

@@ -184,7 +184,7 @@ def parse_args():
     p.add_argument("--seed", type=int, default=0, help="Random seed")
     p.add_argument("--device", type=str, default="auto", help="PyTorch device: auto/cpu/cuda")
     p.add_argument("--save-freq", type=int, default=200_000, help="Checkpoint save frequency (timesteps)")
-    p.add_argument("--save-model", type=str, default=None, help="Path to checkpoint to resume training from (e.g., models/fruitbot/20240115-120000/ppo_1000000_steps.zip)")
+    p.add_argument("--from-model", type=str, default=None, help="Path to checkpoint to resume training from (e.g., models/fruitbot/20240115-120000/ppo_1000000_steps.zip)")
     p.add_argument("--use-gymnasium", action="store_true", default=False, help="Use gymnasium instead of gym if available")
     p.add_argument("--use-source", action="store_true", default=False, help="Build envs from procgen source (only needed for C++ development)")
     # Procgen-specific knobs
@@ -199,12 +199,13 @@ def parse_args():
     p.add_argument("--fruitbot-reward-negative", type=float, default=-1.0, help="FruitBot: penalty for touching bad food")
     p.add_argument("--fruitbot-reward-wall-hit", type=float, default=-3.0, help="FruitBot: penalty for hitting walls/doors")
     p.add_argument("--fruitbot-reward-step", type=float, default=0.0, help="FruitBot: small reward for each step (encourages survival)")
+    p.add_argument("--fruitbot-door-prob-pct", type=int, default=20, help="FruitBot: probability of door spawning (0-100)")
     # Wandb integration
     p.add_argument("--wandb-project", type=str, default=None, help="Weights & Biases project name")
     p.add_argument("--wandb-run-name", type=str, default=None, help="Weights & Biases run name")
     p.add_argument("--wandb-tags", type=str, nargs="*", default=None, help="Weights & Biases tags")
     # GPU optimization
-    p.add_argument("--n-epochs", type=int, default=10, help="Number of PPO epochs per update")
+    p.add_argument("--n-epochs", type=int, default=15, help="Number of PPO epochs per update")
     return p.parse_args()
 
 
@@ -274,13 +275,13 @@ def main():
         env_kwargs["use_stay_bonus_wrapper"] = True
         env_kwargs["stay_bonus"] = 0.1
         env_kwargs['fruitbot_num_walls'] = 3
-        env_kwargs['fruitbot_num_good_min'] = 7
+        env_kwargs['fruitbot_num_good_min'] = 5
         env_kwargs['fruitbot_num_good_range'] = 1
-        env_kwargs['fruitbot_num_bad_min'] = 7
+        env_kwargs['fruitbot_num_bad_min'] = 5
         env_kwargs['fruitbot_num_bad_range'] = 1
         env_kwargs['fruitbot_wall_gap_pct'] = 50
-        env_kwargs['fruitbot_door_prob_pct'] = 30
-        env_kwargs['food_diversity'] = 2
+        env_kwargs['fruitbot_door_prob_pct'] = args.fruitbot_door_prob_pct
+        env_kwargs['food_diversity'] = 6
 
         print(f"\nFruitBot Reward Configuration:")
         print(f"  Completion bonus: {args.fruitbot_reward_completion}")
@@ -320,8 +321,8 @@ def main():
     print(f"{'='*60}\n")
     
     # Load model - now the seed wrapper is already in place
-    if args.save_model:
-        checkpoint_path = Path(args.save_model)
+    if args.from_model:
+        checkpoint_path = Path(args.from_model)
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
         

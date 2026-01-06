@@ -230,6 +230,7 @@ class FruitBotGame : public BasicAbstractGame {
         }
         if (options.fruitbot_door_prob_pct >= 0) {
             door_prob = options.fruitbot_door_prob_pct / 100.0f;
+            // std::cout << "updating door_prob to " << door_prob << std::endl;
         }
 
         // 1. WALLS: Random partition using rand_gen
