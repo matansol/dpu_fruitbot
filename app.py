@@ -113,19 +113,6 @@ if save_to_db:
 else:
     print("Database saving is disabled (save_to_db=False)")
 
-# class Action(Base):
-#     __tablename__ = "actions"
-#     id = Column(Integer, primary_key=True, index=True)
-#     user_id = Column(String(100))
-#     action_type = Column(String(20))
-#     agent_action = Column(Boolean)
-#     score = Column(Float)
-#     reward = Column(Float)
-#     done = Column(Boolean)
-#     episode = Column(Integer)
-#     timestamp = Column(String(30))
-#     agent_index = Column(Integer)
-#     env_state = Column(String(1000))
 
 class Users(Base):
     __tablename__ = "users"
@@ -196,13 +183,14 @@ class GameControl:
     def __init__(
         self,
         models_paths: Dict[int, Dict[str, Any]],
-        models_distance: Dict[int, Dict[int, Dict[str, Any]]], # {model_i: {target_model_i: {'name': str, 'configs': List[(seed, config_index)]}}}
+        models_distance: Dict[int, Dict[int, Dict[str, Any]]], # {base_agent_idx: {next_agent_idx: {'name': str, 'configs': [[seed1, seed2, seed3], ...]}}}
+                                                                 # configs[i] contains top 3 differentiating seeds for env config index i
         user_id: str,
         similar_level_env: int = 0,
         feedback_partial_view: bool = True,
         env_seed_list: List[int] = list(range(100, 1000)),
     ) -> None:
-        self.agent_index = 0  # Start with first agent
+        self.agent_index = 1
         self.models_paths = models_paths
         self.models_distance = models_distance
         self.episode_num = 0
@@ -238,72 +226,33 @@ class GameControl:
         self.env_seed_used: list = []  # List of used environments
         self.current_config_index: int = 0
         
-        # Define 4 different environment configurations
-        self.env_configs = [
-            # Config 1: No walls, balanced fruits and bad items
-            {
-                'name': 'No Walls - Balanced',
-                'fruitbot_num_walls': 1,
-                'fruitbot_num_good_min': 5,
-                'fruitbot_num_good_range': 5,
-                'fruitbot_num_bad_min': 5,
-                'fruitbot_num_bad_range': 5,
-                'fruitbot_wall_gap_pct': 95,
-                'fruitbot_door_prob_pct': 0,
-                'food_diversity': 4,
-                'use_discrete_action_wrapper': True,
-                'use_stay_bonus_wrapper': False,
-            },
-            # Config 2: With walls, only good fruits
-            {
-                'name': 'Walls - Only Fruits',
-                'fruitbot_num_walls': 3,
-                'fruitbot_num_good_min': 6,
-                'fruitbot_num_good_range': 4,
-                'fruitbot_num_bad_min': 1,
-                'fruitbot_num_bad_range': 0,
-                'fruitbot_wall_gap_pct': 30,
-                'fruitbot_door_prob_pct': 0,
-                'food_diversity': 4,
-                'use_discrete_action_wrapper': True,
-                'use_stay_bonus_wrapper': False,
-            },
-            # Config 3: With walls, few fruits, lots of bad items
-            {
-                'name': 'Walls - Sparse Fruits Many Bad',
-                'fruitbot_num_walls': 4,
-                'fruitbot_num_good_min': 2,
-                'fruitbot_num_good_range': 3,
-                'fruitbot_num_bad_min': 10,
-                'fruitbot_num_bad_range': 5,
-                'fruitbot_wall_gap_pct': 40,
-                'fruitbot_door_prob_pct': 0,
-                'food_diversity': 4,
-                'use_discrete_action_wrapper': True,
-                'use_stay_bonus_wrapper': False,
-            },
-            # Config 4: With walls, doors, and all food types
-            {
-                'name': 'Walls + Doors - Full Complexity',
-                'fruitbot_num_walls': 5,
-                'fruitbot_num_good_min': 5,
-                'fruitbot_num_good_range': 5,
-                'fruitbot_num_bad_min': 5,
-                'fruitbot_num_bad_range': 5,
-                'fruitbot_wall_gap_pct': 50,
-                'fruitbot_door_prob_pct': 20,
-                'food_diversity': 6,
-                'use_discrete_action_wrapper': True,
-                'use_stay_bonus_wrapper': False,
-            }
-        ]
+        # Use centralized environment configurations from dpu_clf
+        # This ensures consistency with evaluate_comprehensive.py
+        self.env_configs = get_app_env_configs()
+        """
+        Configs Index mapping:
+            0-2: basic variants (g3_b6, g6_b2, g6_b6)
+            3-4: walls_fruits variants (g4_b0, g8_b0)
+            5-8: walls_doors variants (d30_g6_b2, d30_g6_b6, d60_g6_b2, d60_g6_b6)
+        """
 
-    def create_new_env(self, env_seed: int = 0, config_index = None) -> Tuple[gym.Env, int, str]:
+    def create_new_env(
+        self,
+        env_seed: int = 0,
+        config_index = None,
+        *,
+        layout_mode: Optional[int] = None,
+        layout_overrides: Optional[Dict[str, Any]] = None,
+        force_no_walls: Optional[bool] = None,
+    ) -> Tuple[gym.Env, int, str]:
         """Create a new environment instance with specified configuration.
         
         Args:
             env_seed: Random seed for environment generation
             config_index: Index of configuration to use (0-3), or None for random selection
+            layout_mode: Optional layout mode (None keeps default). 1 = line layout (good on left, bad on right)
+            layout_overrides: Optional dict of fruitbot_* keys to override (e.g., positions, counts)
+            force_no_walls: Optional flag to skip wall generation regardless of config
         
         Returns:
             Configured gym environment
@@ -315,22 +264,87 @@ class GameControl:
         # Get config and make a copy to avoid modifying the original
         config = self.env_configs[config_index].copy()
         config_name = config.pop('name')  # Remove name from kwargs
+        config.pop('option_name', None)  # Remove metadata fields not needed by gym.make
+        config.pop('option_variant', None)
+
+        # Apply optional structured layout controls without changing existing presets
+        if layout_mode is not None:
+            config['fruitbot_layout_mode'] = layout_mode
+        if force_no_walls is not None:
+            config['fruitbot_force_no_walls'] = bool(force_no_walls)
+            if force_no_walls:
+                config['fruitbot_num_walls'] = 0
+                config.setdefault('fruitbot_wall_gap_pct', 100)
+        if layout_overrides:
+            # Only merge known keys; pass-through is OK because gym.make forwards to procgen
+            config.update(layout_overrides)
         
         print(f"[create_new_env] Using config: {config_name} (index {config_index})")
         
         seed = env_seed if env_seed else self.env_seed
-        env = gym.make("procgen-fruitbot-v0", distribution_mode="easy", rand_seed=seed, **config)
+        config['rand_seed'] = seed  # Update seed in config
+        env = gym.make("procgen-fruitbot-v0", **config)
         return env, config_index, config_name
+
+    def create_structured_line_env(
+        self,
+        env_seed: int = 0,
+        *,
+        good_line_x_pct: int = 15,
+        bad_line_x_pct: int = 85,
+        line_padding_pct: int = 10,
+        num_good: int = 10,
+        num_bad: int = 10,
+        base_config_index: int = 0,
+        force_no_walls: bool = True,
+    ) -> Tuple[gym.Env, int, str]:
+        """Create a FruitBot env where good items are on a left-side line and bad items on a right-side line.
+
+        This keeps all existing environment controls intact by building on top of a base config
+        and only layering the new layout parameters. Defaults place fruits on 15%% x-position and
+        junk on 85%% x-position with a 10%% vertical padding.
+        """
+
+        base_idx = base_config_index if 0 <= base_config_index < len(self.env_configs) else 0
+        base_config = self.env_configs[base_idx].copy()
+        config_name = f"{base_config.get('name', 'custom')} + Structured Lines"
+        base_config.pop('name', None)
+        base_config.pop('option_name', None)  # Remove metadata fields
+        base_config.pop('option_variant', None)
+
+        layout_overrides = {
+            'fruitbot_layout_mode': 1,
+            'fruitbot_good_line_x_pct': good_line_x_pct,
+            'fruitbot_bad_line_x_pct': bad_line_x_pct,
+            'fruitbot_line_padding_pct': line_padding_pct,
+            'fruitbot_num_good_min': num_good,
+            'fruitbot_num_good_range': 1,
+            'fruitbot_num_bad_min': num_bad,
+            'fruitbot_num_bad_range': 1,
+        }
+
+        if force_no_walls:
+            layout_overrides['fruitbot_force_no_walls'] = True
+            layout_overrides['fruitbot_num_walls'] = 0
+            layout_overrides['fruitbot_wall_gap_pct'] = 100
+
+        seed = env_seed if env_seed else self.env_seed
+        merged_config = {**base_config, **layout_overrides}
+        merged_config['rand_seed'] = seed  # Update seed in config
+        env = gym.make("procgen-fruitbot-v0", **merged_config)
+        return env, base_idx, config_name
         
     @timeit
     def reset(self) -> np.ndarray:
-        optinal_seed = [seed for seed in self.env_seed_list if seed not in self.env_seed_used]
+        # optinal_seed = [seed for seed in self.env_seed_list if seed not in self.env_seed_used]
+        optinal_seed = list(range(100, 1000))
         # Set the environment FIRST before calling update_agent
         self.env_seed = random.choice(optinal_seed)
         self.env_seed_used.append(self.env_seed)
         
         # Create new environment with randomly selected configuration
         self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed)
+        # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
         print(f"[reset] Created new environment with seed {self.env_seed}, config: {self.current_config_name}")
         
         # Now safe to call update_agent since self.env exists
@@ -781,12 +795,26 @@ class GameControl:
         elif similarity_level == 2: # random env
             self.env_seed_demonstration = random.choice(self.env_seed_list)
             config_idx = random.randint(0, len(self.env_configs) - 1)
-        else: # contrst
-            # Access the configs for the target agent directly from nested dict
-            config_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
-            print(f"[agents_different_routs] Config options for similarity level 2: {config_options}")
-            self.env_seed_demonstration, config_idx = random.choice(config_options)
-            print(f"[agents_different_routs] Selected seed {self.env_seed_demonstration} and config index {config_idx} for similarity level 2")
+        else: # contrast - use models_distance to find best differentiating env
+            # Access configs list: configs[i] = [seed1, seed2, seed3] for config index i
+            configs_list = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
+            print(f"[agents_different_routs] Total configs available: {len(configs_list)}")
+            
+            # Choose a random config index
+            config_idx = random.randint(0, len(configs_list) - 1)
+            
+            # Get best seeds for this config (list of 3 seeds)
+            best_seeds_for_config = configs_list[config_idx]
+            
+            # Choose one of the best seeds randomly
+            if best_seeds_for_config and len(best_seeds_for_config) > 0:
+                self.env_seed_demonstration = random.choice(best_seeds_for_config)
+            else:
+                # Fallback if no seeds available
+                self.env_seed_demonstration = random.choice(self.env_seed_list)
+                print(f"[agents_different_routs] WARNING: No seeds available for config {config_idx}, using random seed")
+            
+            print(f"[agents_different_routs] Selected config_idx={config_idx}, seed={self.env_seed_demonstration}")
         
         self.env_seed_used.append(self.env_seed_demonstration)
 
@@ -797,10 +825,6 @@ class GameControl:
         env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx)
         env2, _, _ = self.create_new_env(self.env_seed_demonstration, config_index=config_idx)
         print(f"[agents_different_routs] Using config: {config_name} for both agents")
-        # env1 = gym.make("procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", rand_seed=self.env_seed_demonstration, **env_kwargs)  
-        # env2 = gym.make("procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", rand_seed=self.env_seed_demonstration, **env_kwargs)  
-        # env1 = gym.make("procgen:procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", **kwargs)  
-        # env2 = gym.make("procgen:procgen-fruitbot-v0", render_mode="rgb_array", num_levels=0, start_level=0, distribution_mode="easy", **kwargs)  
 
         frames_list_updated, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
         frames_list_prev, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
@@ -885,81 +909,95 @@ sid_to_user: Dict[str, str] = {}
     - open doors and collect all foods
     - open doors and avoid all foods
     - open doors and collect only fruits
-
-
-    models\fruitbot\20260103-151117_easy\ppo_final.zip - open 1/2 doors and collect only junk
     
 """
 
-models_dict = {
-    0: {'path': "models/fruitbot/20251222-161336_easy/ppo_final.zip", 'name': 'Agent0'},
-    1: {'path': "models/fruitbot/20251225-083104_easy/ppo_final.zip", 'name': 'Agent1'},
-    2: {'path': "models/fruitbot/20251224-140335_easy/ppo_final.zip", 'name': 'Agent2'},
-    3: {'path': "models/fruitbot/20251130-001800_easy/ppo_final.zip", 'name': 'Agent3'},
-    4: {'path': "models/fruitbot/20251203-132922_easy/ppo_final.zip", 'name': 'Agent4'}, # avoid all
-    5: {'path': "models/fruitbot/20251224-133036_easy/ppo_final.zip", 'name': 'Agent5'}, 
-}
-
 easy_models_dict = {
-    0: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'name': 'Agent0'}, # stupid agent
-    1: {'path': "models/fruitbot/20251222-194508_easy/ppo_final.zip", 'name': 'Agent1'}, # evaid walls and randomly collect food
-    2: {'path': "models/fruitbot/20251225-083104_easy/ppo_final.zip", 'name': 'Agent2'}, # donot open doors and collect only fruits
-    4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'name': 'Agent4'}, # open doors (-) and collect only fruits 
+    # Behavior 1: avoid walls and randomly collect food
+    0: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 0, 'name': 'random_food_avoid_walls'},
+    
+    # Behavior 2: 
+    1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
+    
+    # Behavior 3: don't open doors and collect all food
+    2: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 2, 'name': 'no_doors_collect_all'},
+    
+    # Behavior 4: don't open doors and collect only fruits
+    3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
+    
+    # Behavior 5: collect only fruits and open doors
+    4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
+    
+    # Behavior 6: open doors and collect all foods
+    5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
+    
+    # Behavior 7: open doors and avoid all foods  
+    6: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_avoid_food'},
+    
+    # Behavior 8: try to open doors and collect only fruits
+    7: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 7, 'name': 'only_fruits_tries_open_doors'},
 
-    5: {"path": "models/fruitbot/20251130-001800_easy/ppo_final.zip", 'name': 'Agent5'}, # avoid walls, collect some food and throw randomly keys
-    6: {"path": "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'name':'Agent6'}, # open 1/2 the doors, do not collct any food
-    7: {"path": "models/fruitbot/20260105-075949_easy/ppo_final.zip", "name": 'Agent7'}, # open most doors, collect fruits only
+    # Behavior 9: do not open doors and collect only junk
+    8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
 }
 
-hard_models_dict = {
-    0: {'path': "models/fruitbot/20251227-205223_hard/ppo_final.zip", 'name': 'Agent0'}, # collect only fruits do not open doors
-}
 
 # for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
 models_distance = {
     0: {
-        1: {'name': 'Agent1', 'configs': [(12343, 0), (15678, 2)]},
-        2: {'name': 'Agent2', 'configs': [(10234, 1), (18456, 3), (14567, 0)]},
-        3: {'name': 'Agent3', 'configs': [(11890, 2), (16234, 1)]},
-        4: {'name': 'Agent4', 'configs': [(13456, 3), (17890, 0), (19123, 2)]}
+        2: {'name': 'no_doors_collect_all', 'configs': [[1008, 1013, 1009], [1010, 1002, 1008], [1014, 1003, 1009], [1000, 1006, 1009], [1007, 1009, 1012], [1003, 1015, 1017], [1012, 1004, 1015], [1017, 1004, 1014], [1012, 1004, 1017]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1001, 1008, 1016], [1001, 1009, 1018], [1003, 1001, 1004], [1006, 1007, 1012], [1000, 1013, 1018], [1009, 1006, 1003], [1012, 1002, 1018], [1002, 1009, 1006], [1012, 1018, 1011]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1008, 1016, 1005], [1010, 1008, 1015], [1014, 1010, 1018], [1003, 1007, 1012], [1015, 1016, 1007], [1016, 1001, 1015], [1004, 1010, 1001], [1004, 1012, 1014], [1004, 1010, 1011]]},
+        1: {'name': 'avoid_walls_random_food', 'configs': [[1004, 1013, 1002], [1009, 1001, 1013], [1014, 1008, 1009], [1004, 1006, 1011], [1001, 1009, 1010], [1011, 1015, 1001], [1015, 1019, 1011], [1009, 1005, 1006], [1019, 1006, 1015]]},
     },
     1: {
-        0: {'name': 'Agent0', 'configs': [(10567, 1), (15234, 3)]},
-        2: {'name': 'Agent2', 'configs': [(12789, 0), (16890, 2), (18234, 1)]},
-        3: {'name': 'Agent3', 'configs': [(14123, 2), (17456, 0)]},
-        5: {'name': 'Agent5', 'configs': [(11234, 3), (19567, 1)]}
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1013, 1008, 1004], [1018, 1011, 1001], [1003, 1014, 1005], [1016, 1012, 1019], [1007, 1015, 1019], [1011, 1015, 1004], [1018, 1012, 1002], [1004, 1018, 1005], [1018, 1012, 1006]]},
+        8: {'name': 'no_doors_junk_only', 'configs': [[1012, 1002, 1003], [1003, 1016, 1014], [1014, 1003, 1007], [1012, 1007, 1018], [1001, 1012, 1016], [1018, 1014, 1001], [1018, 1002, 1015], [1018, 1014, 1005], [1018, 1014, 1001]]},
+        0: {'name': 'stupid_agent', 'configs': [[1013, 1004, 1002], [1009, 1001, 1013], [1014, 1008, 1009], [1004, 1006, 1011], [1001, 1009, 1010], [1011, 1015, 1001], [1015, 1019, 1011], [1009, 1005, 1006], [1019, 1006, 1015]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1003, 1015, 1008], [1004, 1009, 1019], [1009, 1008, 1003], [1012, 1018, 1004], [1007, 1012, 1011], [1011, 1004, 1009], [1011, 1012, 1004], [1004, 1014, 1015], [1012, 1004, 1019]]},
     },
     2: {
-        0: {'name': 'Agent0', 'configs': [(10890, 2), (15890, 0), (18567, 3)]},
-        1: {'name': 'Agent1', 'configs': [(12456, 1), (16123, 2)]},
-        3: {'name': 'Agent3', 'configs': [(13890, 0), (17234, 3)]},
-        4: {'name': 'Agent4', 'configs': [(11567, 2), (19890, 1), (14890, 0)]}
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1013, 1016, 1017], [1000, 1001, 1017], [1001, 1017, 1005], [1003, 1006, 1014], [1015, 1012, 1017], [1014, 1017, 1016], [1012, 1010, 1015], [1014, 1017, 1013], [1012, 1010, 1011]]},
+        0: {'name': 'stupid_agent', 'configs': [[1008, 1013, 1009], [1010, 1002, 1008], [1014, 1003, 1009], [1000, 1006, 1009], [1007, 1009, 1012], [1015, 1017, 1003], [1012, 1004, 1015], [1017, 1004, 1014], [1012, 1004, 1017]]},
+        7: {'name': 'open_doors_fruits_only', 'configs': [[1017, 1003, 1009], [1004, 1007, 1019], [1013, 1017, 1001], [1006, 1005, 1016], [1000, 1012, 1003], [1015, 1008, 1017], [1008, 1015, 1012], [1008, 1017, 1014], [1008, 1011, 1017]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1013, 1003, 1009], [1009, 1011, 1018], [1004, 1008, 1018], [1018, 1000, 1015], [1013, 1000, 1018], [1009, 1015, 1017], [1018, 1002, 1001], [1017, 1012, 1015], [1018, 1006, 1011]]},
     },
     3: {
-        0: {'name': 'Agent0', 'configs': [(10123, 3), (15567, 1)]},
-        1: {'name': 'Agent1', 'configs': [(12890, 2), (16567, 0), (19234, 3)]},
-        2: {'name': 'Agent2', 'configs': [(14234, 1), (17890, 2)]},
-        5: {'name': 'Agent5', 'configs': [(11890, 0), (18890, 3)]}
+        7: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1011, 1008], [1007, 1000, 1002], [1011, 1004, 1015], [1014, 1003, 1015], [1019, 1017, 1000], [1015, 1008, 1010], [1010, 1014, 1008], [1008, 1010, 1015], [1010, 1014, 1008]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1013, 1016, 1017], [1000, 1001, 1017], [1001, 1017, 1005], [1014, 1003, 1006], [1015, 1012, 1017], [1014, 1017, 1016], [1012, 1010, 1015], [1014, 1017, 1013], [1012, 1010, 1011]]},
+        4: {'name': 'fruits_over_walls', 'configs': [[1009, 1004, 1005], [1001, 1002, 1004], [1001, 1011, 1004], [1013, 1019, 1016], [1012, 1019, 1003], [1010, 1015, 1006], [1000, 1006, 1003], [1010, 1006, 1000], [1000, 1011, 1002]]},
+        0: {'name': 'stupid_agent', 'configs': [[1008, 1016, 1005], [1010, 1008, 1015], [1014, 1010, 1018], [1003, 1007, 1012], [1015, 1016, 1007], [1016, 1001, 1015], [1004, 1010, 1001], [1004, 1012, 1014], [1004, 1010, 1011]]},
     },
     4: {
-        0: {'name': 'Agent0', 'configs': [(10456, 2), (15123, 0), (19456, 1)]},
-        1: {'name': 'Agent1', 'configs': [(13234, 3), (17123, 1)]},
-        2: {'name': 'Agent2', 'configs': [(11123, 0), (16456, 2)]},
-        3: {'name': 'Agent3', 'configs': [(14567, 1), (18123, 3), (19789, 0)]}
+        7: {'name': 'open_doors_fruits_only', 'configs': [[1011, 1003, 1004], [1000, 1001, 1004], [1015, 1006, 1001], [1016, 1003, 1000], [1012, 1016, 1005], [1008, 1009, 1000], [1008, 1010, 1014], [1008, 1009, 1002], [1008, 1010, 1014]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1004, 1005], [1001, 1002, 1004], [1001, 1011, 1004], [1013, 1019, 1016], [1012, 1019, 1016], [1010, 1015, 1006], [1000, 1006, 1003], [1010, 1006, 1002], [1011, 1000, 1002]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1013, 1009, 1016], [1000, 1016, 1017], [1013, 1017, 1005], [1006, 1002, 1003], [1015, 1000, 1005], [1015, 1010, 1017], [1003, 1000, 1015], [1010, 1006, 1000], [1000, 1010, 1012]]},
+        0: {'name': 'stupid_agent', 'configs': [[1008, 1016, 1014], [1008, 1002, 1010], [1014, 1010, 1015], [1003, 1012, 1009], [1015, 1012, 1009], [1010, 1000, 1003], [1004, 1000, 1010], [1010, 1002, 1001], [1002, 1004, 1000]]},
     },
-    5: {
-        0: {'name': 'Agent0', 'configs': [(10789, 1), (15456, 3)]},
-        1: {'name': 'Agent1', 'configs': [(12123, 0), (16789, 2), (19012, 1)]},
-        2: {'name': 'Agent2', 'configs': [(13567, 3), (17567, 0)]},
-        4: {'name': 'Agent4', 'configs': [(11456, 2), (18456, 1)]}
+    6: {
+        0: {'name': 'stupid_agent', 'configs': [[1001, 1008, 1016], [1001, 1009, 1018], [1003, 1001, 1004], [1006, 1007, 1012], [1000, 1013, 1018], [1009, 1006, 1003], [1012, 1002, 1018], [1002, 1009, 1006], [1012, 1018, 1011]]},
+        1: {'name': 'avoid_walls_random_food', 'configs': [[1013, 1004, 1008], [1018, 1011, 1001], [1003, 1014, 1005], [1016, 1012, 1007], [1007, 1015, 1019], [1011, 1015, 1004], [1018, 1012, 1002], [1004, 1018, 1005], [1018, 1012, 1006]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1013, 1003, 1010], [1009, 1011, 1018], [1004, 1008, 1018], [1018, 1000, 1015], [1013, 1000, 1018], [1009, 1015, 1017], [1018, 1002, 1001], [1017, 1012, 1015], [1018, 1006, 1011]]},
+        8: {'name': 'no_doors_junk_only', 'configs': [[1007, 1016, 1013], [1015, 1010, 1007], [1007, 1014, 1002], [1018, 1006, 1010], [1018, 1003, 1015], [1003, 1004, 1014], [1019, 1004, 1012], [1002, 1004, 1014], [1011, 1002, 1019]]},
+    },
+    7: {
+        4: {'name': 'fruits_over_walls', 'configs': [[1011, 1003, 1004], [1000, 1001, 1004], [1015, 1006, 1001], [1003, 1016, 1000], [1012, 1016, 1005], [1008, 1009, 1000], [1008, 1010, 1014], [1008, 1009, 1002], [1008, 1010, 1014]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1011, 1008], [1007, 1000, 1002], [1011, 1004, 1015], [1003, 1015, 1014], [1019, 1017, 1000], [1015, 1008, 1010], [1010, 1008, 1014], [1008, 1010, 1015], [1010, 1008, 1014]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1017, 1003, 1009], [1004, 1007, 1019], [1013, 1017, 1001], [1006, 1016, 1005], [1000, 1012, 1003], [1015, 1008, 1017], [1008, 1015, 1012], [1008, 1017, 1014], [1008, 1011, 1012]]},
+        0: {'name': 'stupid_agent', 'configs': [[1002, 1006, 1008], [1010, 1002, 1008], [1014, 1010, 1012], [1000, 1009, 1012], [1016, 1007, 1002], [1008, 1010, 1016], [1004, 1008, 1007], [1008, 1010, 1009], [1004, 1008, 1005]]},
+    },
+    8: {
+        1: {'name': 'avoid_walls_random_food', 'configs': [[1012, 1002, 1003], [1003, 1016, 1014], [1014, 1003, 1007], [1012, 1007, 1001], [1012, 1001, 1004], [1018, 1014, 1001], [1018, 1002, 1015], [1018, 1014, 1005], [1018, 1014, 1001]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1007, 1016, 1014], [1015, 1007, 1009], [1007, 1014, 1002], [1018, 1010, 1006], [1018, 1003, 1010], [1003, 1004, 1014], [1019, 1004, 1012], [1002, 1004, 1014], [1011, 1002, 1019]]},
+        0: {'name': 'stupid_agent', 'configs': [[1012, 1013, 1009], [1007, 1003, 1018], [1003, 1002, 1007], [1010, 1011, 1007], [1010, 1000, 1012], [1018, 1014, 1002], [1002, 1018, 1019], [1018, 1014, 1009], [1018, 1019, 1014]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1015, 1012, 1007], [1015, 1014, 1018], [1007, 1002, 1009], [1011, 1000, 1015], [1013, 1000, 1007], [1003, 1018, 1002], [1018, 1002, 1004], [1018, 1004, 1019], [1018, 1004, 1019]]},
     },
 }
-# C:\Users\matan\master_thesis\rl_envs\procgen\models\fruitbot\20251130-001800_easy
-# sub_models_distance = {
-#     0: [(1, 'FruitbotBase1', [])],
-#     1: [(0, 'FruitbotEasy1', [])],
-#     2: [(0, 'FruitbotEasy1', [])],
-# }
+
+
+hard_models_dict = {
+    0: {'path': "models/fruitbot/20251227-205223_hard/ppo_final.zip", 'name': 'Agent0'}, # collect only fruits do not open doors
+}
 
 # Action mappings for Fruitbot
 actions_dict = {
@@ -1063,7 +1101,7 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
 
             try:
                 new_game = GameControl(
-                    models_dict,
+                    easy_models_dict,
                     models_distance,
                     user_id,
                     similar_level_env=similarity_level,
@@ -1173,6 +1211,17 @@ async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
         await sio.emit("error", {"error": "User not found"}, to=sid)
         return
     user_game = game_controls[user_id]
+    
+    # Check if 4 episodes have been completed
+    if user_game.episode_num >= 4:
+        print(f"[next_episode] User {user_id} has completed 4 episodes, ending game")
+        print(f"[next_episode] Final agent index: {user_game.agent_index}")
+        await sio.emit("game_finished", {
+            "total_episodes": user_game.episode_num,
+            "final_agent_index": user_game.agent_index
+        }, to=sid)
+        return
+    
     response = user_game.get_initial_observation()
     await sio.emit("game_update", response, to=sid)
 
@@ -1283,9 +1332,6 @@ async def play_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
 async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playerName: playerNameInput.value, updateAgent: true, userFeedback: userFeedback, actions: actions, similarity_level: similarity_level }  
     print(f"\n{'='*80}")
     print(f"[compare_agents] SOCKET EVENT RECEIVED")
-    print(f"[compare_agents] SID: {sid}")
-    print(f"[compare_agents] Data keys: {list(data.keys())}")
-    print(f"[compare_agents] Update agent flag: {data.get('updateAgent')}")
     print(f"[compare_agents] User feedback count: {len(data.get('userFeedback', []))}")
     print(f"{'='*80}\n")
     

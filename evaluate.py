@@ -13,6 +13,27 @@ Examples:
     python evaluate.py --model models/fruitbot/20251116-195636/ppo_final.zip --env fruitbot --episodes 5 --render --record
 """
 
+"""
+# Object types:const int BARRIER = 1;
+# const int OUT_OF_BOUNDS_WALL = 2;
+# const int PLAYER_BULLET = 3;
+# const int BAD_OBJ = 4;
+# const int GOOD_OBJ = 7;
+# const int LOCKED_DOOR = 10;
+# const int LOCK = 11;
+# const int PRESENT = 12;
+# """
+collision_map = {
+    1: "BARRIER",
+    2: "OUT_OF_BOUNDS_WALL",
+    3: "PLAYER_BULLET",
+    4: "BAD_OBJ",
+    7: "GOOD_OBJ",
+    10: "LOCKED_DOOR",
+    11: "LOCK",
+    12: "PRESENT",
+}
+
 import os
 os.environ['PROCGEN_NO_BUILD'] = '1'
 
@@ -91,9 +112,11 @@ def evaluate_agent(
         ep_good = 0
         ep_bad = 0
         ep_wall = 0
+        action_hist = [0]*4
 
         while not (done or truncated):
             action, _states = model.predict(obs, deterministic=True)
+            action_hist[action] += 1
             result = env.step(action)
 
             # Handle both gym and gymnasium API
@@ -112,6 +135,7 @@ def evaluate_agent(
                 cv2.waitKey(1)
                 if delay > 0 and steps % 2 == 0:
                     time.sleep(delay)
+
 
             # Ensure reward is a scalar float (if it's array-like)
             try:
@@ -132,6 +156,7 @@ def evaluate_agent(
             elif np.isclose(r, fruitbot_reward_wall_hit, atol=TOL, rtol=0.0):
                 ep_wall += 1
 
+        print("action histogram:", action_hist)
         episode_rewards.append(total_reward)
         episode_lengths.append(steps)
 
@@ -288,6 +313,13 @@ def main() -> None:
     parser.add_argument("--fruitbot-door-percentage", type=int, default=0, help="FruitBot: the percentage of walls with doors")
     parser.add_argument("--fast", action="store_true", help="Use fast parallel evaluation (no rendering)")
     parser.add_argument("--num-parallel", type=int, default=8, help="Number of parallel environments for fast evaluation")
+    
+    # FruitBot structured layout options
+    parser.add_argument("--fruitbot-layout-mode", type=int, default=0, choices=[0, 1], help="FruitBot: 0=random layout, 1=line layout (good on left, bad on right)")
+    parser.add_argument("--fruitbot-good-line-x-pct", type=int, default=15, help="FruitBot: X position percentage for good items line (0-100)")
+    parser.add_argument("--fruitbot-bad-line-x-pct", type=int, default=85, help="FruitBot: X position percentage for bad items line (0-100)")
+    parser.add_argument("--fruitbot-line-padding-pct", type=int, default=10, help="FruitBot: Vertical padding percentage for line layouts (0-45)")
+    parser.add_argument("--fruitbot-force-no-walls", action="store_true", help="FruitBot: Skip wall generation entirely (no walls mode)")
 
     
     args = parser.parse_args()
@@ -348,6 +380,18 @@ def main() -> None:
     env_kwargs['fruitbot_wall_gap_pct'] = 40
     env_kwargs["fruitbot_door_prob_pct"] = args.fruitbot_door_percentage
     env_kwargs['food_diversity'] = 6
+    
+    # Add structured layout parameters
+    env_kwargs['fruitbot_layout_mode'] = args.fruitbot_layout_mode
+    env_kwargs['fruitbot_good_line_x_pct'] = args.fruitbot_good_line_x_pct
+    env_kwargs['fruitbot_bad_line_x_pct'] = args.fruitbot_bad_line_x_pct
+    env_kwargs['fruitbot_line_padding_pct'] = args.fruitbot_line_padding_pct
+    env_kwargs['fruitbot_force_no_walls'] = args.fruitbot_force_no_walls
+    
+    # Override wall settings if force-no-walls is enabled
+    if args.fruitbot_force_no_walls:
+        env_kwargs['fruitbot_num_walls'] = 0
+        env_kwargs['fruitbot_wall_gap_pct'] = 100
 
 
     if args.compile:

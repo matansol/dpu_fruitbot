@@ -79,6 +79,11 @@ struct GameOptions {
     int fruitbot_wall_gap_pct = -1;
     int fruitbot_door_prob_pct = -1;  
     int food_diversity = 4;
+    int fruitbot_layout_mode = 0;          // 0=random, 1=line layout
+    int fruitbot_good_line_x_pct = 15;      // percentage from left
+    int fruitbot_bad_line_x_pct = 85;       // percentage from left
+    int fruitbot_line_padding_pct = 10;     // vertical padding percent
+    bool fruitbot_force_no_walls = false;   // skip wall generation entirely
 };
 
 class Game {

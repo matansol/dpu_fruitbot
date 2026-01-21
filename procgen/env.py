@@ -234,6 +234,12 @@ class ProcgenGym3Env(BaseProcgenEnv):
         fruitbot_wall_gap_pct=40,
         fruitbot_door_prob_pct=0,
         food_diversity=4,
+        # FruitBot structured layouts
+        fruitbot_layout_mode=0,
+        fruitbot_good_line_x_pct=15,
+        fruitbot_bad_line_x_pct=85,
+        fruitbot_line_padding_pct=10,
+        fruitbot_force_no_walls=False,
         **kwargs,
     ):
         assert (
@@ -280,6 +286,11 @@ class ProcgenGym3Env(BaseProcgenEnv):
             options["fruitbot_wall_gap_pct"] = fruitbot_wall_gap_pct
             options["fruitbot_door_prob_pct"] = fruitbot_door_prob_pct
             options["food_diversity"] = food_diversity  # default food diversity level
+            options["fruitbot_layout_mode"] = fruitbot_layout_mode
+            options["fruitbot_good_line_x_pct"] = fruitbot_good_line_x_pct
+            options["fruitbot_bad_line_x_pct"] = fruitbot_bad_line_x_pct
+            options["fruitbot_line_padding_pct"] = fruitbot_line_padding_pct
+            options["fruitbot_force_no_walls"] = bool(fruitbot_force_no_walls)
         
         super().__init__(num, env_name, options, **kwargs)
         

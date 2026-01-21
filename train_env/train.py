@@ -175,10 +175,10 @@ def parse_args():
     p.add_argument("--n-steps", type=int, default=512, help="PPO n_steps")
     p.add_argument("--batch-size", type=int, default=256, help="PPO batch_size")
     p.add_argument("--learning-rate", type=float, default=5e-4, help="PPO learning rate")
-    p.add_argument("--gamma", type=float, default=0.97, help="Discount factor")
+    p.add_argument("--gamma", type=float, default=0.93, help="Discount factor")
     p.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
     p.add_argument("--clip-range", type=float, default=0.2, help="Policy clip range")
-    p.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient")
+    p.add_argument("--ent-coef", type=float, default=0.05, help="Entropy coefficient")
     p.add_argument("--vf-coef", type=float, default=0.37, help="Value function coefficient")
     p.add_argument("--max-grad-norm", type=float, default=0.6, help="Gradient clipping")
     p.add_argument("--seed", type=int, default=0, help="Random seed")
@@ -196,9 +196,9 @@ def parse_args():
     # FruitBot custom reward shaping
     p.add_argument("--fruitbot-reward-completion", type=float, default=10.0, help="FruitBot: reward for reaching the goal")
     p.add_argument("--fruitbot-reward-positive", type=float, default=2.0, help="FruitBot: reward for collecting good fruit")
-    p.add_argument("--fruitbot-reward-negative", type=float, default=-1.0, help="FruitBot: penalty for touching bad food")
+    p.add_argument("--fruitbot-reward-negative", type=float, default=-2.0, help="FruitBot: penalty for touching bad food")
     p.add_argument("--fruitbot-reward-wall-hit", type=float, default=-3.0, help="FruitBot: penalty for hitting walls/doors")
-    p.add_argument("--fruitbot-reward-step", type=float, default=0.0, help="FruitBot: small reward for each step (encourages survival)")
+    p.add_argument("--fruitbot-reward-step", type=float, default=0.1, help="FruitBot: small reward for each step (encourages survival)")
     p.add_argument("--fruitbot-door-prob-pct", type=int, default=20, help="FruitBot: probability of door spawning (0-100)")
     # Wandb integration
     p.add_argument("--wandb-project", type=str, default=None, help="Weights & Biases project name")
@@ -274,12 +274,12 @@ def main():
         env_kwargs["use_discrete_action_wrapper"] = True
         env_kwargs["use_stay_bonus_wrapper"] = True
         env_kwargs["stay_bonus"] = 0.1
-        env_kwargs['fruitbot_num_walls'] = 3
+        env_kwargs['fruitbot_num_walls'] = 4
         env_kwargs['fruitbot_num_good_min'] = 5
-        env_kwargs['fruitbot_num_good_range'] = 1
+        env_kwargs['fruitbot_num_good_range'] = 0
         env_kwargs['fruitbot_num_bad_min'] = 5
-        env_kwargs['fruitbot_num_bad_range'] = 1
-        env_kwargs['fruitbot_wall_gap_pct'] = 50
+        env_kwargs['fruitbot_num_bad_range'] = 0
+        env_kwargs['fruitbot_wall_gap_pct'] = 40
         env_kwargs['fruitbot_door_prob_pct'] = args.fruitbot_door_prob_pct
         env_kwargs['food_diversity'] = 6
 

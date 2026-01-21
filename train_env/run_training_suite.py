@@ -19,40 +19,39 @@ from typing import Optional, Dict, Any
 # ============================================================================
 
 # Base model to fine-tune from, or None to train from scratch
-BASE_MODEL: Optional[str] = r"models\fruitbot\20251230-134845_easy\ppo_final.zip"
-BASE_MODEL: Optional[str] = None  # Uncomment to train from scratch
+BASE_MODEL: Optional[str] = r"models/fruitbot/20251231-174002_easy/ppo_final.zip"
+# BASE_MODEL: Optional[str] = None  # Uncomment to train from scratch
 
 # Training configurations - easily add/remove parameter sets here
 TRAINING_CONFIGS = [
     {
-        "name": "doors_fruits",
-        "description": "collect fruits, open doors",
-        "fruitbot_reward_negative": -2,
-        "fruitbot_reward_positive": 2,
-        "fruitbot_reward_wall_hit": -5,
-        "fruitbot_reward_step": 0.1,
-        "fruitbot_door_prob_pct": 30,
-    },
-    {
-        "name": "only fruits, open doors",
-        "description": "only fruits, open doors, want to stay",
-        "fruitbot_reward_negative": -2,
-        "fruitbot_reward_positive": 2,
+        "name": "ignore food, open doors",
+        "description": "ignore food, open doors",
+        "fruitbot_reward_negative": 0,
+        "fruitbot_reward_positive": 0,
         "fruitbot_reward_wall_hit": -3,
-        "fruitbot_reward_step": 0.2,
-        "fruitbot_door_prob_pct": 20,
+        "fruitbot_reward_step": 0.1,
+        "fruitbot_door_prob_pct": 70,
     },
-    # Add more configurations below:
     {
-        "name": "only fruits, no doors",
-        "description": "Balanced positive and negative rewards",
-        "fruitbot_reward_negative": -1,
+        "name": "all food, open doors",
+        "description": "all food, open doors",
+        "fruitbot_reward_negative": 3,
         "fruitbot_reward_positive": 1,
-        "fruitbot_reward_wall_hit": -2,
-        "fruitbot_reward_step": 0.05,
-        "fruitbot_door_prob_pct": 0,
+        "fruitbot_reward_wall_hit": -3,
+        "fruitbot_reward_step": 0.1,
+        "fruitbot_door_prob_pct": 80,
     },
-]
+#     {
+#         "name": "all food, open doors",
+#         "description": "all food, open doors",
+#         "fruitbot_reward_negative": 2,
+#         "fruitbot_reward_positive": 2,
+#         "fruitbot_reward_wall_hit": -3,
+#         "fruitbot_reward_step": 0.1,
+#         "fruitbot_door_prob_pct": 70,
+#     },    
+ ]
 
 # Common training hyperparameters (same for all configs)
 COMMON_PARAMS = {
@@ -61,7 +60,7 @@ COMMON_PARAMS = {
     "n_envs": 32,
     "device": "cuda",
     "distribution_mode": "easy",
-    "total_steps": 4000000,
+    "total_steps": 1000000,
 }
 
 # ============================================================================

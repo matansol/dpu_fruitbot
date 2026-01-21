@@ -15,7 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
         agentPlay: document.getElementById('agent-play-page'),
         overview: document.getElementById('overview-page'),
         compare: document.getElementById('compare-page'),
-        agentUpdated: document.getElementById('agent-updated-page')
+        agentUpdated: document.getElementById('agent-updated-page'),
+        finish: document.getElementById('finish-page')
     };
 
     // DEBUG: Check if all pages were found
@@ -24,13 +25,15 @@ document.addEventListener('DOMContentLoaded', () => {
         agentPlay: !!pages.agentPlay,
         overview: !!pages.overview,
         compare: !!pages.compare,
-        agentUpdated: !!pages.agentUpdated
+        agentUpdated: !!pages.agentUpdated,
+        finish: !!pages.finish
     });
 
     const buttons = {
         startGame: document.getElementById('btn-start-game'),
         playVideo: document.getElementById('btn-play-video'),
         playSequence: document.getElementById('btn-play-sequence'),
+        playBackward: document.getElementById('btn-play-backward'),
         pauseSequence: document.getElementById('btn-pause-sequence'),
         prevAction: document.getElementById('btn-prev-action'),
         nextAction: document.getElementById('btn-next-action'),
@@ -99,6 +102,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let totalScore = 0;
     let playerName = getPlayerNameFromURL();
     let group = getPlayerGroupFromURL();
+    let episodeCount = 0;  // Track number of episodes completed
+    const MAX_EPISODES = 4;  // End game after 4 episodes
 
     // Playback state
     let isPlaying = false;
@@ -106,15 +111,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const ACTION_NAMES = {
         0: "LEFT ←",
-        1: "UP ↑",
+        1: "STAY",
         2: "RIGHT →",
-        // 3: "THROW",
+        3: "THROW",
     };
 
     // --- PAGE NAVIGATION ---
     function showPage(pageName) {
         console.log('[DEBUG] showPage called with:', pageName);
-        console.log('[DEBUG] Available pages:', Object.keys(pages));
 
         Object.values(pages).forEach(page => {
             if (page) page.classList.remove('active');
@@ -131,12 +135,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CANVAS HELPERS ---
     function drawImageOnCanvas(canvas, base64Image) {
-        console.log('[drawImageOnCanvas] Called with:', {
-            canvasId: canvas?.id,
-            canvasExists: !!canvas,
-            imageDataLength: base64Image?.length,
-            imagePrefix: base64Image?.substring(0, 50)
-        });
 
         if (!canvas) {
             console.error('[drawImageOnCanvas] Canvas is null or undefined');
@@ -152,17 +150,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const img = new Image();
 
         img.onload = () => {
-            console.log('[drawImageOnCanvas] Image loaded successfully:', {
-                canvasId: canvas.id,
-                imageWidth: img.width,
-                imageHeight: img.height,
-                canvasWidth: canvas.width,
-                canvasHeight: canvas.height
-            });
             canvas.width = img.width;
             canvas.height = img.height;
             ctx.drawImage(img, 0, 0);
-            console.log('[drawImageOnCanvas] Image drawn to canvas');
         };
 
         img.onerror = (error) => {
@@ -172,16 +162,9 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         img.src = 'data:image/jpeg;base64,' + base64Image;
-        console.log('[drawImageOnCanvas] Image src set, loading...');
     }
 
     function playVideoSequence(canvas, images, fps = 10, onComplete) {
-        console.log('[playVideoSequence] Starting playback:', {
-            canvasId: canvas?.id,
-            numImages: images?.length,
-            fps: fps
-        });
-
         if (!canvas || !images || images.length === 0) {
             console.error('[playVideoSequence] Invalid canvas or images:', {
                 canvasExists: !!canvas,
@@ -198,7 +181,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const playFrame = () => {
             if (frameIndex >= images.length) {
-                console.log('[playVideoSequence] Playback complete');
                 if (onComplete) onComplete();
                 return;
             }
@@ -208,7 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 canvas.width = img.width;
                 canvas.height = img.height;
                 ctx.drawImage(img, 0, 0);
-                console.log(`[playVideoSequence] Frame ${frameIndex + 1}/${images.length} drawn`);
                 frameIndex++;
                 setTimeout(playFrame, interval);
             };
@@ -424,12 +405,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? episodePositions[index]
                     : canvases.overviewCanvas.width / 2;
 
-                // Shift arrow based on action direction
+                // Shift arrow based on action direction, but keep within canvas bounds
                 const shiftAmount = 20; // pixels to shift
+                const canvasWidth = canvases.overviewCanvas.width;
+                const margin = 20; // Margin from edge to keep arrow fully visible
+                
                 if (displayAction === 0) { // LEFT
-                    symbolX -= shiftAmount;
+                    const newX = symbolX - shiftAmount;
+                    if (newX >= margin) {
+                        symbolX = newX;
+                    }
                 } else if (displayAction === 2) { // RIGHT
-                    symbolX += shiftAmount;
+                    const newX = symbolX + shiftAmount;
+                    if (newX <= canvasWidth - margin) {
+                        symbolX = newX;
+                    }
                 }
 
                 drawActionSymbol(ctx, displayAction, symbolX, symbolY, 40);
@@ -449,7 +439,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- EVENT LISTENERS ---
     buttons.startGame.addEventListener('click', () => {
-        console.log('[startGame] Button clicked');
         console.log('[startGame] Player name:', playerName);
         console.log('[startGame] Player group:', group);
         console.log('[startGame] Emitting start_game event');
@@ -471,6 +460,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         isPlaying = true;
         buttons.playSequence.style.display = 'none';
+        buttons.playBackward.style.display = 'none';
         buttons.pauseSequence.style.display = 'flex';
 
         playbackInterval = setInterval(() => {
@@ -478,6 +468,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 showOverviewAction(currentActionIndex + 1);
             } else {
                 // Reached end, stop playing
+                stopPlayback();
+            }
+        }, 100); // 0.1 seconds per frame
+    });
+
+    buttons.playBackward.addEventListener('click', () => {
+        if (episodeActions.length === 0) return;
+
+        isPlaying = true;
+        buttons.playSequence.style.display = 'none';
+        buttons.playBackward.style.display = 'none';
+        buttons.pauseSequence.style.display = 'flex';
+
+        playbackInterval = setInterval(() => {
+            if (currentActionIndex > 0) {
+                showOverviewAction(currentActionIndex - 1);
+            } else {
+                // Reached beginning, stop playing
                 stopPlayback();
             }
         }, 100); // 0.1 seconds per frame
@@ -494,6 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
             playbackInterval = null;
         }
         buttons.playSequence.style.display = 'flex';
+        buttons.playBackward.style.display = 'flex';
         buttons.pauseSequence.style.display = 'none';
     }
 
@@ -550,6 +559,8 @@ document.addEventListener('DOMContentLoaded', () => {
     buttons.noFeedback.addEventListener('click', () => {
         console.log('No feedback clicked');
         userFeedback = [];
+        episodeCount++;
+        console.log(`[noFeedback] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
         socket.emit('next_episode', { playerName: playerName });
         showPage('agentPlay');
         resetAgentPlayPage();
@@ -561,6 +572,8 @@ document.addEventListener('DOMContentLoaded', () => {
             playerName: playerName,
             use_updated: false
         });
+        episodeCount++;
+        console.log(`[usePrevious] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
         socket.emit('next_episode', { playerName: playerName });
         showPage('agentPlay');
         resetAgentPlayPage();
@@ -572,6 +585,8 @@ document.addEventListener('DOMContentLoaded', () => {
             playerName: playerName,
             use_updated: true
         });
+        episodeCount++;
+        console.log(`[useUpdated] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
         socket.emit('next_episode', { playerName: playerName });
         showPage('agentPlay');
         resetAgentPlayPage();
@@ -580,6 +595,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Button handler for similarity level 0 - continue to next episode after agent update
     buttons.continueNextEpisode.addEventListener('click', () => {
         console.log('[continueNextEpisode] Continuing to next episode after agent update (similarity level 0)');
+        episodeCount++;
+        console.log(`[continueNextEpisode] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
         socket.emit('next_episode', { playerName: playerName });
         showPage('agentPlay');
         resetAgentPlayPage();
@@ -672,6 +689,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.collisions) episodeCollisions = data.collisions;  // Replace with latest
         if (data.score !== undefined) totalScore = data.score;
 
+        console.log('[episode_batch] Actions with names:', episodeActions.map((a, i) => `${i}: ${a} (${ACTION_NAMES[a] || 'UNKNOWN'})`));
+
         if (totalScoreElement) {
             totalScoreElement.textContent = totalScore.toFixed(1);
         }
@@ -697,10 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.on('episode_data', (data) => {
         console.log('[episode_data] ===== RECEIVED =====');
-        console.log('[episode_data] Received episode data:', data);
-        console.log('[episode_data] Images array length:', data.images?.length);
-        console.log('[episode_data] Actions array length:', data.actions?.length);
-        console.log('[episode_data] Positions array length:', data.positions?.length);
+        console.log('[episode_data] Actions with names:', data.actions?.map((a, i) => `${i}: ${a} (${ACTION_NAMES[a] || 'UNKNOWN'})`));
 
         // Only use episode_data if we haven't received batches
         // (backwards compatibility or fallback)
@@ -822,6 +838,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         console.log('[compare_agents] ===== END =====');
+    });
+
+    socket.on('game_finished', (data) => {
+        console.log('[game_finished] ===== GAME COMPLETE =====');
+        console.log('[game_finished] Total episodes:', data.total_episodes);
+        console.log('[game_finished] Final agent index:', data.final_agent_index);
+        
+        // Update completion code with agent index
+        const completionCodeElement = document.getElementById('completion-code');
+        if (completionCodeElement && data.final_agent_index !== undefined) {
+            completionCodeElement.textContent = `APPL${data.final_agent_index}`;
+        }
+        
+        hideLoading();
+        showPage('finish');
+        console.log('[game_finished] Switched to finish page');
     });
 
     // Initialize

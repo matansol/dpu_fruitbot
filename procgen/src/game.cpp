@@ -101,6 +101,11 @@ void Game::parse_options(std::string name, VecOptions opts) {
         opts.consume_int("fruitbot_wall_gap_pct", &options.fruitbot_wall_gap_pct);
         opts.consume_int("fruitbot_door_prob_pct", &options.fruitbot_door_prob_pct);
         opts.consume_int("food_diversity", &options.food_diversity);
+        opts.consume_int("fruitbot_layout_mode", &options.fruitbot_layout_mode);
+        opts.consume_int("fruitbot_good_line_x_pct", &options.fruitbot_good_line_x_pct);
+        opts.consume_int("fruitbot_bad_line_x_pct", &options.fruitbot_bad_line_x_pct);
+        opts.consume_int("fruitbot_line_padding_pct", &options.fruitbot_line_padding_pct);
+        opts.consume_bool("fruitbot_force_no_walls", &options.fruitbot_force_no_walls);
     }
 
     opts.ensure_empty();

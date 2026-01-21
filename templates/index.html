@@ -284,6 +284,9 @@
     <div id="overview-page" class="page">
         <div class="overview-container">
             <div class="playback-controls">
+                <button id="btn-play-backward" class="btn btn-secondary">
+                    <span class="backward-icon"></span> ◄ Backward
+                </button>
                 <button id="btn-play-sequence" class="btn btn-secondary">
                     <span class="play-icon"></span> Play
                 </button>
@@ -320,6 +323,10 @@
                     <div class="legend-item">
                         <div class="legend-symbol">↑</div>
                         <span>Move Up</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-symbol">!</div>
+                        <span>Throw</span>
                     </div>
                 </div>
             </div>
@@ -366,6 +373,20 @@
         <button id="btn-continue-next-episode" class="btn btn-primary" style="font-size: 18px; padding: 15px 40px;">
             Continue to Next Episode
         </button>
+    </div>
+
+    <!-- Finish Page (after 4 episodes) -->
+    <div id="finish-page" class="page" style="text-align: center; padding: 60px 40px;">
+        <h1 style="color: #2E86AB; margin-bottom: 30px;">🎉 Game Complete!</h1>
+        <p style="font-size: 20px; margin-bottom: 20px;">
+            Completion code: <span id="completion-code" style="font-weight: bold; color: #2E86AB;">APPL</span>
+        </p>
+        <p style="font-size: 18px; margin-bottom: 40px; color: #555;">
+            Thank you for completing all episodes!
+        </p>
+        <p style="font-size: 16px; color: #888;">
+            You can now close this window.
+        </p>
     </div>
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>

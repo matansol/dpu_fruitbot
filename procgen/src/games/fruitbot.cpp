@@ -2,6 +2,7 @@
 #include "../assetgen.h"
 #include <set>
 #include <queue>
+#include <algorithm>
 
 const std::string NAME = "fruitbot";
 
@@ -201,6 +202,24 @@ class FruitBotGame : public BasicAbstractGame {
         }
     }
 
+    void spawn_line_entities(int count, float x_pct, int type, int padding_pct, int object_group_size) {
+        if (count <= 0) return;
+
+        float x = std::clamp(x_pct / 100.0f, 0.05f, 0.95f) * main_width;
+        float pad = std::clamp(padding_pct / 100.0f, 0.0f, 0.45f) * main_height;
+        float y_start = pad + 0.5f;
+        float y_end = main_height - pad - 0.5f;
+        float span = std::max(0.1f, y_end - y_start);
+
+        for (int i = 0; i < count; i++) {
+            float t = (count == 1) ? 0.5f : (float)i / (float)(count - 1);
+            float y = y_start + t * span;
+            auto ent = add_entity_rxy(x, y, 0, 0, 0.5f, 0.5f, type);
+            ent->image_theme = rand_gen.randn(object_group_size);
+            fit_aspect_ratio(ent);
+        }
+    }
+
     void game_reset() override {
         // Call parent's game_reset FIRST without manipulation
         BasicAbstractGame::game_reset();
@@ -213,6 +232,7 @@ class FruitBotGame : public BasicAbstractGame {
         int buf_h = 4;
         float door_prob = 0.125f;
         float min_pct = 0.4f;
+        bool force_no_walls = options.fruitbot_force_no_walls;
 
         if (options.distribution_mode == EasyMode) {
             num_walls = 5;
@@ -233,43 +253,62 @@ class FruitBotGame : public BasicAbstractGame {
             // std::cout << "updating door_prob to " << door_prob << std::endl;
         }
 
-        // 1. WALLS: Random partition using rand_gen
-        std::vector<int> partition = rand_gen.partition(main_height - min_sep * num_walls - buf_h, num_walls);
-        
-        int curr_h = 0;
-        for (int part : partition) {
-            int dy = min_sep + part;
-            curr_h += dy;
+        // Clamp gap to avoid degenerate geometry when users pass 100%
+        min_pct = std::clamp(min_pct, 0.05f, 0.95f);
+        if (options.fruitbot_wall_gap_pct >= 100) {
+            force_no_walls = true;
+        }
+        if (num_walls <= 0) {
+            force_no_walls = true;
+        }
 
-            // Random door probability
-            bool use_door = (dy > 5) && rand_gen.rand01() < door_prob;
+        // 1. WALLS: Random partition using rand_gen (unless forced off)
+        if (!force_no_walls) {
+            std::vector<int> partition = rand_gen.partition(std::max(1, main_height - min_sep * num_walls - buf_h), num_walls);
             
-            add_walls(curr_h, use_door, min_pct);  // <-- Uses rand_gen for gap positions
+            int curr_h = 0;
+            for (int part : partition) {
+                int dy = min_sep + part;
+                curr_h += dy;
+
+                // Random door probability
+                bool use_door = (dy > 5) && rand_gen.rand01() < door_prob;
+                
+                add_walls(curr_h, use_door, min_pct);  // <-- Uses rand_gen for gap positions
+            }
         }
 
         agent->y = agent->ry;
 
-        int num_good = rand_gen.randn(options.fruitbot_num_good_range) + options.fruitbot_num_good_min;
-        int num_bad = rand_gen.randn(options.fruitbot_num_bad_range) + options.fruitbot_num_bad_min;
+        // Handle range=0 case to avoid modulo by zero in randn()
+        int num_good = (options.fruitbot_num_good_range > 0 ? rand_gen.randn(options.fruitbot_num_good_range) : 0) + options.fruitbot_num_good_min;
+        int num_bad = (options.fruitbot_num_bad_range > 0 ? rand_gen.randn(options.fruitbot_num_bad_range) : 0) + options.fruitbot_num_bad_min;
 
         for (int i = 0; i < main_width; i++) {
             auto present = add_entity_rxy(i + 0.5f, main_height - 0.5f, 0, 0, 0.5f, 0.5f, PRESENT);
             choose_random_theme(present);
         }
 
-        // Only spawn if count > 0 to avoid potential issues with spawn_entities
-        if (num_good > 0) {
-            spawn_entities(num_good, 0.5f, GOOD_OBJ, 0, 0, main_width, main_height);
-        }
-        if (num_bad > 0) {
-            spawn_entities(num_bad, 0.5f, BAD_OBJ, 0, 0, main_width, main_height);
-        }
+        bool use_line_layout = options.fruitbot_layout_mode == 1;
 
-        // 4. FOOD SPRITES: Random sprite selection
-        for (auto ent : entities) {
-            if (ent->type == GOOD_OBJ || ent->type == BAD_OBJ) {
-                ent->image_theme = rand_gen.randn(object_group_size);
-                fit_aspect_ratio(ent);
+        // 3. FOOD: structured layout or random spawn
+        if (use_line_layout) {
+            spawn_line_entities(num_good, options.fruitbot_good_line_x_pct, GOOD_OBJ, options.fruitbot_line_padding_pct, object_group_size);
+            spawn_line_entities(num_bad, options.fruitbot_bad_line_x_pct, BAD_OBJ, options.fruitbot_line_padding_pct, object_group_size);
+        } else {
+            if (num_good > 0) {
+                spawn_entities(num_good, 0.5f, GOOD_OBJ, 0, 0, main_width, main_height);
+            }
+            if (num_bad > 0) {
+                spawn_entities(num_bad, 0.5f, BAD_OBJ, 0, 0, main_width, main_height);
+            }
+
+            // 4. FOOD SPRITES: Random sprite selection
+            for (auto ent : entities) {
+                if (ent->type == GOOD_OBJ || ent->type == BAD_OBJ) {
+                    ent->image_theme = rand_gen.randn(object_group_size);
+                    fit_aspect_ratio(ent);
+                }
             }
         }
         

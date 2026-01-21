@@ -24,6 +24,246 @@ import cv2
 # const int PRESENT = 12;
 collision_object_types = [3, 4]
 
+
+# =============================================================================
+# CENTRALIZED ENVIRONMENT CONFIGURATIONS
+# ================================================================================
+# AVAILABLE ENVIRONMENT CONFIGURATIONS
+# ================================================================================
+# Total configurations: 9
+
+# ────────────────────────────────────────────────────────────────────────────────
+# OPTION: BASIC
+# ────────────────────────────────────────────────────────────────────────────────
+#   Walls: 0 | Force no walls: True
+
+#   [0] g3_b6
+#   [1] g6_b2
+#   [2] g6_b6
+
+# ────────────────────────────────────────────────────────────────────────────────
+# OPTION: WALLS_FRUITS
+# ────────────────────────────────────────────────────────────────────────────────
+#   Walls: 4 | Force no walls: False
+
+#   [3] g4_b0
+#   [4] g8_b0
+
+# ────────────────────────────────────────────────────────────────────────────────
+# OPTION: WALLS_DOORS
+# ────────────────────────────────────────────────────────────────────────────────
+#   Walls: 3 (with doors) | Force no walls: False
+
+#   [5] d30_g6_b2
+#   [6] d30_g6_b6
+#   [7] d60_g6_b2
+#   [8] d60_g6_b6
+# =============================================================================
+# These configs are used by both app.py and evaluate_comprehensive.py
+# Environment Option Types
+ENV_OPTION_BASIC = "basic"
+ENV_OPTION_WALLS_FRUITS = "walls_fruits"
+ENV_OPTION_WALLS_DOORS = "walls_doors"
+
+ALL_ENV_OPTIONS = [ENV_OPTION_BASIC, ENV_OPTION_WALLS_FRUITS, ENV_OPTION_WALLS_DOORS]
+
+
+# Base environment configuration defaults
+BASE_ENV_CONFIG = {
+    'distribution_mode': 'easy',
+    'food_diversity': 6,
+    'use_discrete_action_wrapper': True,
+    'use_stay_bonus_wrapper': False,
+    'fruitbot_reward_positive': 2.0,
+    'fruitbot_reward_negative': -1.0,
+    'fruitbot_reward_wall_hit': -3.0,
+    'fruitbot_reward_completion': 5.0,
+    'fruitbot_reward_step': 0.0,
+}
+
+# Environment configurations organized by option type
+# Each variant has: (good_min, bad_min, variant_name, extra_params)
+ENV_CONFIG_DEFINITIONS = {
+    # Option 1: BASIC - No walls, all food types, range 1
+    ENV_OPTION_BASIC: {
+        'base_params': {
+            'fruitbot_num_walls': 0,
+            'fruitbot_force_no_walls': True,
+            'fruitbot_num_good_range': 1,
+            'fruitbot_num_bad_range': 1,
+            'fruitbot_wall_gap_pct': 0,
+            'fruitbot_door_prob_pct': 0,
+        },
+        'variants': [
+            {'name': 'g3_b6', 'fruitbot_num_good_min': 2, 'fruitbot_num_bad_min': 6},
+            {'name': 'g6_b2', 'fruitbot_num_good_min': 6, 'fruitbot_num_bad_min': 2},
+            {'name': 'g6_b6', 'fruitbot_num_good_min': 6, 'fruitbot_num_bad_min': 6},
+        ],
+    },
+    # Option 2: WALLS_FRUITS - 4 walls, only good fruits, range 0
+    ENV_OPTION_WALLS_FRUITS: {
+        'base_params': {
+            'fruitbot_num_walls': 4,
+            'fruitbot_force_no_walls': False,
+            'fruitbot_num_good_range': 0,
+            'fruitbot_num_bad_range': 0,
+            'fruitbot_wall_gap_pct': 30,
+            'fruitbot_door_prob_pct': 0,
+        },
+        'variants': [
+            {'name': 'g4_b0', 'fruitbot_num_good_min': 4, 'fruitbot_num_bad_min': 0},
+            {'name': 'g8_b0', 'fruitbot_num_good_min': 8, 'fruitbot_num_bad_min': 0},
+        ],
+    },
+    # Option 3: WALLS_DOORS - 3 walls with doors, all food types, range 1
+    ENV_OPTION_WALLS_DOORS: {
+        'base_params': {
+            'fruitbot_num_walls': 3,
+            'fruitbot_force_no_walls': False,
+            'fruitbot_num_good_range': 1,
+            'fruitbot_num_bad_range': 1,
+            'fruitbot_wall_gap_pct': 40,
+        },
+        'variants': [
+            {'name': 'd30_g6_b2', 'fruitbot_num_good_min': 6, 'fruitbot_num_bad_min': 2, 'fruitbot_door_prob_pct': 40},
+            {'name': 'd30_g6_b6', 'fruitbot_num_good_min': 6, 'fruitbot_num_bad_min': 6, 'fruitbot_door_prob_pct': 40},
+            {'name': 'd60_g6_b2', 'fruitbot_num_good_min': 6, 'fruitbot_num_bad_min': 2, 'fruitbot_door_prob_pct': 80},
+            {'name': 'd60_g6_b6', 'fruitbot_num_good_min': 6, 'fruitbot_num_bad_min': 6, 'fruitbot_door_prob_pct': 80},
+        ],
+    },
+}
+
+
+def get_env_config(option_name: str, variant_name: str = None, seed: int = None) -> dict:
+    """
+    Get environment configuration for a specific option and variant.
+    
+    Args:
+        option_name: One of ENV_OPTION_BASIC, ENV_OPTION_WALLS_FRUITS, ENV_OPTION_WALLS_DOORS
+        variant_name: Specific variant name (e.g., 'g3_b6', 'd30_g6_b2'). If None, returns first variant.
+        seed: Random seed for the environment
+    
+    Returns:
+        Dict of environment kwargs ready for gym.make()
+        
+    """
+    if option_name not in ENV_CONFIG_DEFINITIONS:
+        raise ValueError(f"Unknown option: {option_name}. Valid options: {ALL_ENV_OPTIONS}")
+    
+    option_def = ENV_CONFIG_DEFINITIONS[option_name]
+    
+    # Find the variant
+    variant = None
+    if variant_name is None:
+        variant = option_def['variants'][0]
+    else:
+        for v in option_def['variants']:
+            if v['name'] == variant_name:
+                variant = v
+                break
+        if variant is None:
+            valid_variants = [v['name'] for v in option_def['variants']]
+            raise ValueError(f"Unknown variant: {variant_name}. Valid variants for {option_name}: {valid_variants}")
+    
+    # Build config
+    config = BASE_ENV_CONFIG.copy()
+    config.update(option_def['base_params'])
+    config.update({k: v for k, v in variant.items() if k != 'name'})
+    
+    if seed is not None:
+        config['rand_seed'] = seed
+        config['start_level'] = seed
+    
+    return config
+
+
+def get_all_variants(option_name: str = None) -> list:
+    """
+    Get all variant names for an option or all options.
+    
+    Args:
+        option_name: Specific option or None for all
+    
+    Returns:
+        List of (option_name, variant_name) tuples
+    """
+    result = []
+    options = [option_name] if option_name else ALL_ENV_OPTIONS
+    
+    for opt in options:
+        if opt in ENV_CONFIG_DEFINITIONS:
+            for variant in ENV_CONFIG_DEFINITIONS[opt]['variants']:
+                result.append((opt, variant['name']))
+    
+    return result
+
+
+def get_app_env_configs() -> list:
+    """
+    Get environment configurations formatted for app.py GameControl.
+    Returns list of config dicts with 'name' field.
+    Index mapping:
+      0-2: basic variants (g3_b6, g6_b2, g6_b6)
+      3-4: walls_fruits variants (g4_b0, g8_b0)
+      5-8: walls_doors variants (d30_g6_b2, d30_g6_b6, d60_g6_b2, d60_g6_b6)
+    """
+    configs = []
+    
+    for option_name in ALL_ENV_OPTIONS:
+        option_def = ENV_CONFIG_DEFINITIONS[option_name]
+        for variant in option_def['variants']:
+            config = BASE_ENV_CONFIG.copy()
+            config.update(option_def['base_params'])
+            config.update({k: v for k, v in variant.items() if k != 'name'})
+            
+            # Add descriptive name
+            config['name'] = f"{option_name.upper()} - {variant['name']}"
+            config['option_name'] = option_name
+            config['option_variant'] = variant['name']
+            
+            configs.append(config)
+    
+    return configs
+
+
+def get_env_config_by_index(index: int, seed: int = None) -> dict:
+    """
+    Get environment configuration by index.
+    
+    Index mapping:
+      0-2: basic variants (g3_b6, g6_b2, g6_b6)
+      3-4: walls_fruits variants (g4_b0, g8_b0)
+      5-8: walls_doors variants (d30_g6_b2, d30_g6_b6, d60_g6_b2, d60_g6_b6)
+    
+    Args:
+        index: Configuration index (0-8)
+        seed: Optional random seed
+    
+    Returns:
+        Dict of environment kwargs ready for gym.make()
+    
+    Raises:
+        ValueError: If index is out of range
+    """
+    configs = get_app_env_configs()
+    
+    if index < 0 or index >= len(configs):
+        raise ValueError(f"Index {index} out of range. Valid range: 0-{len(configs)-1}")
+    
+    config = configs[index].copy()
+    
+    # Remove metadata fields
+    config.pop('name', None)
+    config.pop('option_name', None)
+    config.pop('option_variant', None)
+    
+    if seed is not None:
+        config['rand_seed'] = seed
+        config['start_level'] = seed
+    
+    return config
+
+
 def timeit(func):
     """Decorator to measure function execution time."""
     @wraps(func)
@@ -323,17 +563,10 @@ def analyze_fruitbot_colors(img_path: str):
     img = img.resize((512, 512))
     frame = np.array(img)
 
-    print(f"Frame shape: {frame.shape}, dtype: {frame.dtype}")
-
     # Focus on bottom 1/5 of frame where bot is located
     h, w, _ = frame.shape
     y_start = int(h * 0.9)
     bottom_region = frame[y_start:y_start+2, :, :]
-
-
-
-    print(f"Bottom region shape: {bottom_region.shape} (y from {y_start} to {h})")
-    # display(Image.fromarray(bottom_region))  # Disabled for production
 
     # Analyze colors in bottom region
     pixels = bottom_region.reshape(-1, 3)
@@ -619,7 +852,6 @@ def draw_collision_on_image(image: np.ndarray, collision_x: float, collision_y: 
     
     # Get image dimensions
     total_height, img_width = image.shape[:2]
-    print(f"Image original dimensions: width={img_width}, height={total_height}")
     img_height = 1060 # for easy world coord conversion,   image unit=53
     
 
@@ -628,7 +860,6 @@ def draw_collision_on_image(image: np.ndarray, collision_x: float, collision_y: 
     x_pix = int(collision_x * img_width)
     y_pix = total_height - int((collision_y) * img_height) # y_offset + int((1.0 - collision_y) * img_height)  # Invert Y for screen coords
 
-    print(f"Collision at normalized coords: ({collision_x:.3f}, {collision_y:.3f}) -> pixel coords: ({x_pix}, {y_pix})")
     # Convert to numpy array if PIL Image
     if isinstance(image, Image.Image):
         img_array = np.array(image)
