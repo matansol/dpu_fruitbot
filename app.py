@@ -92,7 +92,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 # Global variable to control database saving
-save_to_db = False
+save_to_db = True
 
 # SQLAlchemy setup - only connect if save_to_db is enabled
 Base = declarative_base()
@@ -197,7 +197,6 @@ class GameControl:
         self.scores_lst = []
         self.last_obs = None
         self.episode_actions = []
-        self.agent_last_pos = None
         self.episode_images = []
         self.episode_frames = []  # Store raw RGB frames for video creation
         self.episode_obs = []
@@ -215,10 +214,6 @@ class GameControl:
         self.feedback_partial_view: bool = feedback_partial_view
         self.feedback_score: int = 0 # the number of good feedbacks the user gave
         self.number_of_feedbacks: int = 0 # total number of feedbacks the user gave
-        self.board_seen: list = []
-        self.demonstration_unique_envs: list = []  # List to store unique environments for demonstrations
-        self.prev_agent_score_list: list = []
-        self.current_agent_score_list: list = []
         self.past_choices: set = set()  # To avoid repeating the same choice
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
@@ -239,6 +234,7 @@ class GameControl:
     def create_new_env(
         self,
         env_seed: int = 0,
+        env_option = None,
         config_index = None,
         *,
         layout_mode: Optional[int] = None,
@@ -259,7 +255,11 @@ class GameControl:
         """
         # Select random config if not specified
         if config_index is None:
-            config_index = random.randint(0, len(self.env_configs) - 1)
+            if env_option is not None:
+                config_index = random.choice(ENV_OPTION_TO_CONFIG_INDEXES.get(env_option, []))
+            else:
+                config_index = random.randint(0, len(self.env_configs) - 1)
+            
         
         # Get config and make a copy to avoid modifying the original
         config = self.env_configs[config_index].copy()
@@ -342,8 +342,16 @@ class GameControl:
         self.env_seed = random.choice(optinal_seed)
         self.env_seed_used.append(self.env_seed)
         
-        # Create new environment with randomly selected configuration
-        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed)
+        # Create new environment
+        env_option = ENV_OPTION_BASIC
+        if self.episode_num == 1:
+            env_option = ENV_OPTION_WALLS_FRUITS
+        elif self.episode_num == 2:
+            env_option = ENV_OPTION_WALLS_DOORS
+        elif self.episode_num >=3:
+            env_option = random.choice([ENV_OPTION_BASIC, ENV_OPTION_WALLS_FRUITS, ENV_OPTION_WALLS_DOORS])
+        
+        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed, env_option=env_option)
         # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
         print(f"[reset] Created new environment with seed {self.env_seed}, config: {self.current_config_name}")
         
@@ -489,7 +497,6 @@ class GameControl:
         try:
             print(f"[get_initial_observation] Starting reset...")
             self.current_obs = self.reset()
-            self.agent_last_pos = None
             self.episode_actions = []
             
             print(f"[get_initial_observation] Reset complete, obs shape: {self.current_obs.shape if hasattr(self.current_obs, 'shape') else 'N/A'}")
@@ -795,6 +802,7 @@ class GameControl:
         elif similarity_level == 2: # random env
             self.env_seed_demonstration = random.choice(self.env_seed_list)
             config_idx = random.randint(0, len(self.env_configs) - 1)
+            print(f"[agents_different_routs] Selected random seed={self.env_seed_demonstration}, config_idx={config_idx}")
         else: # contrast - use models_distance to find best differentiating env
             # Access configs list: configs[i] = [seed1, seed2, seed3] for config index i
             configs_list = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
@@ -913,86 +921,83 @@ sid_to_user: Dict[str, str] = {}
 """
 
 easy_models_dict = {
-    # Behavior 1: avoid walls and randomly collect food
-    0: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 0, 'name': 'random_food_avoid_walls'},
-    
-    # Behavior 2: 
+    # Behavior 1: 
     1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
     
-    # Behavior 3: don't open doors and collect all food
+    # Behavior 2: don't open doors and collect all food
     2: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 2, 'name': 'no_doors_collect_all'},
     
-    # Behavior 4: don't open doors and collect only fruits
+    # Behavior 3: don't open doors and collect only fruits
     3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
     
-    # Behavior 5: collect only fruits and open doors
+    # Behavior 4: collect only fruits and open doors
     4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
     
-    # Behavior 6: open doors and collect all foods
+    # Behavior 5: open doors and collect all foods
     5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
     
-    # Behavior 7: open doors and avoid all foods  
+    # Behavior 6: open doors and avoid all foods  
     6: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_avoid_food'},
     
-    # Behavior 8: try to open doors and collect only fruits
+    # Behavior 7: try to open doors and collect only fruits
     7: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 7, 'name': 'only_fruits_tries_open_doors'},
 
-    # Behavior 9: do not open doors and collect only junk
+    # Behavior 8: do not open doors and collect only junk
     8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
 }
 
 
 # for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
 models_distance = {
-    0: {
-        2: {'name': 'no_doors_collect_all', 'configs': [[1008, 1013, 1009], [1010, 1002, 1008], [1014, 1003, 1009], [1000, 1006, 1009], [1007, 1009, 1012], [1003, 1015, 1017], [1012, 1004, 1015], [1017, 1004, 1014], [1012, 1004, 1017]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1001, 1008, 1016], [1001, 1009, 1018], [1003, 1001, 1004], [1006, 1007, 1012], [1000, 1013, 1018], [1009, 1006, 1003], [1012, 1002, 1018], [1002, 1009, 1006], [1012, 1018, 1011]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1008, 1016, 1005], [1010, 1008, 1015], [1014, 1010, 1018], [1003, 1007, 1012], [1015, 1016, 1007], [1016, 1001, 1015], [1004, 1010, 1001], [1004, 1012, 1014], [1004, 1010, 1011]]},
-        1: {'name': 'avoid_walls_random_food', 'configs': [[1004, 1013, 1002], [1009, 1001, 1013], [1014, 1008, 1009], [1004, 1006, 1011], [1001, 1009, 1010], [1011, 1015, 1001], [1015, 1019, 1011], [1009, 1005, 1006], [1019, 1006, 1015]]},
-    },
     1: {
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1013, 1008, 1004], [1018, 1011, 1001], [1003, 1014, 1005], [1016, 1012, 1019], [1007, 1015, 1019], [1011, 1015, 1004], [1018, 1012, 1002], [1004, 1018, 1005], [1018, 1012, 1006]]},
-        8: {'name': 'no_doors_junk_only', 'configs': [[1012, 1002, 1003], [1003, 1016, 1014], [1014, 1003, 1007], [1012, 1007, 1018], [1001, 1012, 1016], [1018, 1014, 1001], [1018, 1002, 1015], [1018, 1014, 1005], [1018, 1014, 1001]]},
-        0: {'name': 'stupid_agent', 'configs': [[1013, 1004, 1002], [1009, 1001, 1013], [1014, 1008, 1009], [1004, 1006, 1011], [1001, 1009, 1010], [1011, 1015, 1001], [1015, 1019, 1011], [1009, 1005, 1006], [1019, 1006, 1015]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1003, 1015, 1008], [1004, 1009, 1019], [1009, 1008, 1003], [1012, 1018, 1004], [1007, 1012, 1011], [1011, 1004, 1009], [1011, 1012, 1004], [1004, 1014, 1015], [1012, 1004, 1019]]},
+        7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+        8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
     },
     2: {
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1013, 1016, 1017], [1000, 1001, 1017], [1001, 1017, 1005], [1003, 1006, 1014], [1015, 1012, 1017], [1014, 1017, 1016], [1012, 1010, 1015], [1014, 1017, 1013], [1012, 1010, 1011]]},
-        0: {'name': 'stupid_agent', 'configs': [[1008, 1013, 1009], [1010, 1002, 1008], [1014, 1003, 1009], [1000, 1006, 1009], [1007, 1009, 1012], [1015, 1017, 1003], [1012, 1004, 1015], [1017, 1004, 1014], [1012, 1004, 1017]]},
-        7: {'name': 'open_doors_fruits_only', 'configs': [[1017, 1003, 1009], [1004, 1007, 1019], [1013, 1017, 1001], [1006, 1005, 1016], [1000, 1012, 1003], [1015, 1008, 1017], [1008, 1015, 1012], [1008, 1017, 1014], [1008, 1011, 1017]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1013, 1003, 1009], [1009, 1011, 1018], [1004, 1008, 1018], [1018, 1000, 1015], [1013, 1000, 1018], [1009, 1015, 1017], [1018, 1002, 1001], [1017, 1012, 1015], [1018, 1006, 1011]]},
+        8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
     },
     3: {
-        7: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1011, 1008], [1007, 1000, 1002], [1011, 1004, 1015], [1014, 1003, 1015], [1019, 1017, 1000], [1015, 1008, 1010], [1010, 1014, 1008], [1008, 1010, 1015], [1010, 1014, 1008]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1013, 1016, 1017], [1000, 1001, 1017], [1001, 1017, 1005], [1014, 1003, 1006], [1015, 1012, 1017], [1014, 1017, 1016], [1012, 1010, 1015], [1014, 1017, 1013], [1012, 1010, 1011]]},
-        4: {'name': 'fruits_over_walls', 'configs': [[1009, 1004, 1005], [1001, 1002, 1004], [1001, 1011, 1004], [1013, 1019, 1016], [1012, 1019, 1003], [1010, 1015, 1006], [1000, 1006, 1003], [1010, 1006, 1000], [1000, 1011, 1002]]},
-        0: {'name': 'stupid_agent', 'configs': [[1008, 1016, 1005], [1010, 1008, 1015], [1014, 1010, 1018], [1003, 1007, 1012], [1015, 1016, 1007], [1016, 1001, 1015], [1004, 1010, 1001], [1004, 1012, 1014], [1004, 1010, 1011]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
     },
     4: {
-        7: {'name': 'open_doors_fruits_only', 'configs': [[1011, 1003, 1004], [1000, 1001, 1004], [1015, 1006, 1001], [1016, 1003, 1000], [1012, 1016, 1005], [1008, 1009, 1000], [1008, 1010, 1014], [1008, 1009, 1002], [1008, 1010, 1014]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1004, 1005], [1001, 1002, 1004], [1001, 1011, 1004], [1013, 1019, 1016], [1012, 1019, 1016], [1010, 1015, 1006], [1000, 1006, 1003], [1010, 1006, 1002], [1011, 1000, 1002]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1013, 1009, 1016], [1000, 1016, 1017], [1013, 1017, 1005], [1006, 1002, 1003], [1015, 1000, 1005], [1015, 1010, 1017], [1003, 1000, 1015], [1010, 1006, 1000], [1000, 1010, 1012]]},
-        0: {'name': 'stupid_agent', 'configs': [[1008, 1016, 1014], [1008, 1002, 1010], [1014, 1010, 1015], [1003, 1012, 1009], [1015, 1012, 1009], [1010, 1000, 1003], [1004, 1000, 1010], [1010, 1002, 1001], [1002, 1004, 1000]]},
+        7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
+        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
+    },
+    5: {
+        4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
     },
     6: {
-        0: {'name': 'stupid_agent', 'configs': [[1001, 1008, 1016], [1001, 1009, 1018], [1003, 1001, 1004], [1006, 1007, 1012], [1000, 1013, 1018], [1009, 1006, 1003], [1012, 1002, 1018], [1002, 1009, 1006], [1012, 1018, 1011]]},
-        1: {'name': 'avoid_walls_random_food', 'configs': [[1013, 1004, 1008], [1018, 1011, 1001], [1003, 1014, 1005], [1016, 1012, 1007], [1007, 1015, 1019], [1011, 1015, 1004], [1018, 1012, 1002], [1004, 1018, 1005], [1018, 1012, 1006]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1013, 1003, 1010], [1009, 1011, 1018], [1004, 1008, 1018], [1018, 1000, 1015], [1013, 1000, 1018], [1009, 1015, 1017], [1018, 1002, 1001], [1017, 1012, 1015], [1018, 1006, 1011]]},
-        8: {'name': 'no_doors_junk_only', 'configs': [[1007, 1016, 1013], [1015, 1010, 1007], [1007, 1014, 1002], [1018, 1006, 1010], [1018, 1003, 1015], [1003, 1004, 1014], [1019, 1004, 1012], [1002, 1004, 1014], [1011, 1002, 1019]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+        1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
     },
     7: {
-        4: {'name': 'fruits_over_walls', 'configs': [[1011, 1003, 1004], [1000, 1001, 1004], [1015, 1006, 1001], [1003, 1016, 1000], [1012, 1016, 1005], [1008, 1009, 1000], [1008, 1010, 1014], [1008, 1009, 1002], [1008, 1010, 1014]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1011, 1008], [1007, 1000, 1002], [1011, 1004, 1015], [1003, 1015, 1014], [1019, 1017, 1000], [1015, 1008, 1010], [1010, 1008, 1014], [1008, 1010, 1015], [1010, 1008, 1014]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1017, 1003, 1009], [1004, 1007, 1019], [1013, 1017, 1001], [1006, 1016, 1005], [1000, 1012, 1003], [1015, 1008, 1017], [1008, 1015, 1012], [1008, 1017, 1014], [1008, 1011, 1012]]},
-        0: {'name': 'stupid_agent', 'configs': [[1002, 1006, 1008], [1010, 1002, 1008], [1014, 1010, 1012], [1000, 1009, 1012], [1016, 1007, 1002], [1008, 1010, 1016], [1004, 1008, 1007], [1008, 1010, 1009], [1004, 1008, 1005]]},
+        4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
     },
     8: {
-        1: {'name': 'avoid_walls_random_food', 'configs': [[1012, 1002, 1003], [1003, 1016, 1014], [1014, 1003, 1007], [1012, 1007, 1001], [1012, 1001, 1004], [1018, 1014, 1001], [1018, 1002, 1015], [1018, 1014, 1005], [1018, 1014, 1001]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1007, 1016, 1014], [1015, 1007, 1009], [1007, 1014, 1002], [1018, 1010, 1006], [1018, 1003, 1010], [1003, 1004, 1014], [1019, 1004, 1012], [1002, 1004, 1014], [1011, 1002, 1019]]},
-        0: {'name': 'stupid_agent', 'configs': [[1012, 1013, 1009], [1007, 1003, 1018], [1003, 1002, 1007], [1010, 1011, 1007], [1010, 1000, 1012], [1018, 1014, 1002], [1002, 1018, 1019], [1018, 1014, 1009], [1018, 1019, 1014]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1015, 1012, 1007], [1015, 1014, 1018], [1007, 1002, 1009], [1011, 1000, 1015], [1013, 1000, 1007], [1003, 1018, 1002], [1018, 1002, 1004], [1018, 1004, 1019], [1018, 1004, 1019]]},
-    },
-}
+        1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+    }
+    }
 
 
 hard_models_dict = {
@@ -1088,16 +1093,14 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
         sid_to_user[sid] = user_id
         
         if user_id not in game_controls:
-            # Safely convert group to int, default to 0 if invalid
+            # Safely convert group to int, default to 1 if invalid
             try:
-                group_val = data.get("group", "0")
-                if isinstance(group_val, str) and len(group_val.strip()) > 1:
-                    print(f"[start_game] Invalid group value '{group_val}', defaulting to 0")
-                    similarity_level = 0
-                else:
-                    similarity_level = int(group_val)
-            except (ValueError, TypeError):
-                similarity_level = 0
+                group_val = data.get("group", 1)
+                similarity_level = int(group_val)
+                print(f"[start_game] Group value: {group_val}, similarity_level: {similarity_level}")
+            except (ValueError, TypeError) as e:
+                print(f"[start_game] Invalid group value '{group_val}' ({type(group_val)}), defaulting to 1. Error: {e}")
+                similarity_level = 1
 
             try:
                 new_game = GameControl(

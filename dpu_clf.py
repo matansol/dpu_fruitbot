@@ -74,11 +74,17 @@ BASE_ENV_CONFIG = {
     'food_diversity': 6,
     'use_discrete_action_wrapper': True,
     'use_stay_bonus_wrapper': False,
-    'fruitbot_reward_positive': 2.0,
+    'fruitbot_reward_positive': 1.0,
     'fruitbot_reward_negative': -1.0,
     'fruitbot_reward_wall_hit': -3.0,
-    'fruitbot_reward_completion': 5.0,
+    'fruitbot_reward_completion': 10.0,
     'fruitbot_reward_step': 0.0,
+}
+
+ENV_OPTION_TO_CONFIG_INDEXES = {
+    ENV_OPTION_BASIC: [0, 1, 2],
+    ENV_OPTION_WALLS_FRUITS: [3, 4],
+    ENV_OPTION_WALLS_DOORS: [5, 6, 7, 8],
 }
 
 # Environment configurations organized by option type

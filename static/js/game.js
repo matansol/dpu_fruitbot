@@ -62,8 +62,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- GET PLAYER NAME FROM URL OR GENERATE RANDOM ---
     function getPlayerNameFromURL() {
         const urlParams = new URLSearchParams(window.location.search);
-        const prolificId = urlParams.get('prolificId');
-        const group = urlParams.get('group', 0);
+        // Try both 'prolificId' and 'prolificID' (case variations)
+        const prolificId = urlParams.get('prolificId') || urlParams.get('prolificID');
 
         if (prolificId) {
             console.log('Prolific ID:', prolificId);
@@ -78,11 +78,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- GET PLAYER Group FROM URL OR GENERATE RANDOM ---
     function getPlayerGroupFromURL() {
         const urlParams = new URLSearchParams(window.location.search);
+        console.log('DEBUG: Full URL:', window.location.href);
+        console.log('DEBUG: Search string:', window.location.search);
+        console.log('DEBUG: All URL params:', Array.from(urlParams.entries()));
         const group = urlParams.get('group');
+        console.log('DEBUG: Group value from URL:', group, 'Type:', typeof group);
 
         if (group) {
-            console.log('Group:', group);
-            return group;
+            const groupInt = parseInt(group, 10);
+            console.log('Group:', groupInt);
+            return groupInt;
         }
 
         console.log('could not find group, return default value=1');
@@ -93,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPage = 'welcome';
     let episodeImages = [];
     let episodeActions = [];
+    let episodeRewards = [];  // Add rewards array
     let episodePositions = [];  // Add positions array
     let episodeCollisions = [];  // Add collisions array
     let currentActionIndex = 0;
@@ -100,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let previousAgentImages = [];
     let updatedAgentImages = [];
     let totalScore = 0;
+    let isPlayingVideo = false;  // Track if video playback is active
     let playerName = getPlayerNameFromURL();
     let group = getPlayerGroupFromURL();
     let episodeCount = 0;  // Track number of episodes completed
@@ -111,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const ACTION_NAMES = {
         0: "LEFT ←",
-        1: "STAY",
+        1: "UP",
         2: "RIGHT →",
         3: "THROW",
     };
@@ -164,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
         img.src = 'data:image/jpeg;base64,' + base64Image;
     }
 
-    function playVideoSequence(canvas, images, fps = 10, onComplete) {
+    function playVideoSequence(canvas, images, fps = 10, onComplete, onFrameUpdate = null) {
         if (!canvas || !images || images.length === 0) {
             console.error('[playVideoSequence] Invalid canvas or images:', {
                 canvasExists: !!canvas,
@@ -190,6 +197,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 canvas.width = img.width;
                 canvas.height = img.height;
                 ctx.drawImage(img, 0, 0);
+                
+                // Call frame update callback with current frame index
+                if (onFrameUpdate) {
+                    onFrameUpdate(frameIndex, images.length);
+                }
+                
                 frameIndex++;
                 setTimeout(playFrame, interval);
             };
@@ -396,30 +409,46 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
                 const ctx = canvases.overviewCanvas.getContext('2d');
                 const canvasHeight = canvases.overviewCanvas.height;
+                const canvasWidth = canvases.overviewCanvas.width;
 
                 // Position symbol at bottom 1/10 of canvas
                 const symbolY = canvasHeight - (canvasHeight / 10);
 
-                // Get x position from episode data, or use center as fallback
-                let symbolX = episodePositions[index] !== undefined
-                    ? episodePositions[index]
-                    : canvases.overviewCanvas.width / 2;
+                // Calculate position: use episodePositions[0] as starting point, then track movements
+                let symbolX;
+                if (index === 0) {
+                    // First frame: use position from data or canvas center
+                    symbolX = episodePositions[0] + 20 !== undefined ? episodePositions[0] : canvasWidth / 2;
+                } else {
+                    // Subsequent frames: calculate from starting position + accumulated actions
+                    const startX = episodePositions[0] + 20 !== undefined ? episodePositions[0] : canvasWidth / 2;
+                    const moveSize = 35; // Same as Python backend
+                    const margin = 20; // Keep arrow within bounds
+                    
+                    // Calculate position based on all actions up to current index
+                    symbolX = startX;
+                    for (let i = 0; i < index; i++) {
+                        const action = episodeActions[i];
+                        if (action === 0) { // LEFT
+                            symbolX = Math.max(margin, symbolX - moveSize);
+                        } else if (action === 2) { // RIGHT
+                            symbolX = Math.min(canvasWidth - margin, symbolX + moveSize);
+                        }
+                        // UP (1) and THROW (3) don't change position
+                    }
+                }
 
-                // Shift arrow based on action direction, but keep within canvas bounds
-                const shiftAmount = 20; // pixels to shift
-                const canvasWidth = canvases.overviewCanvas.width;
-                const margin = 20; // Margin from edge to keep arrow fully visible
+                const margin = 20; // pixels from edge
+                const shiftAmount = 35; // pixels to shift for left/right arrows
                 
+                // Clamp the base position within bounds
+                symbolX = Math.max(margin, Math.min(symbolX, canvasWidth - margin));
+                
+                // Then shift arrow based on action direction, ensuring it stays in bounds
                 if (displayAction === 0) { // LEFT
-                    const newX = symbolX - shiftAmount;
-                    if (newX >= margin) {
-                        symbolX = newX;
-                    }
+                    symbolX = Math.max(margin, symbolX - shiftAmount);
                 } else if (displayAction === 2) { // RIGHT
-                    const newX = symbolX + shiftAmount;
-                    if (newX <= canvasWidth - margin) {
-                        symbolX = newX;
-                    }
+                    symbolX = Math.min(canvasWidth - margin, symbolX + shiftAmount);
                 }
 
                 drawActionSymbol(ctx, displayAction, symbolX, symbolY, 40);
@@ -458,9 +487,13 @@ document.addEventListener('DOMContentLoaded', () => {
     buttons.playSequence.addEventListener('click', () => {
         if (episodeActions.length === 0) return;
 
+        // If at the end, restart from beginning
+        if (currentActionIndex >= episodeActions.length - 1) {
+            currentActionIndex = -1; // Will increment to 0 in first iteration
+        }
+
         isPlaying = true;
         buttons.playSequence.style.display = 'none';
-        buttons.playBackward.style.display = 'none';
         buttons.pauseSequence.style.display = 'flex';
 
         playbackInterval = setInterval(() => {
@@ -473,23 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 100); // 0.1 seconds per frame
     });
 
-    buttons.playBackward.addEventListener('click', () => {
-        if (episodeActions.length === 0) return;
-
-        isPlaying = true;
-        buttons.playSequence.style.display = 'none';
-        buttons.playBackward.style.display = 'none';
-        buttons.pauseSequence.style.display = 'flex';
-
-        playbackInterval = setInterval(() => {
-            if (currentActionIndex > 0) {
-                showOverviewAction(currentActionIndex - 1);
-            } else {
-                // Reached beginning, stop playing
-                stopPlayback();
-            }
-        }, 100); // 0.1 seconds per frame
-    });
+    // Backward button removed - not needed in feedback interface
 
     buttons.pauseSequence.addEventListener('click', () => {
         stopPlayback();
@@ -502,7 +519,6 @@ document.addEventListener('DOMContentLoaded', () => {
             playbackInterval = null;
         }
         buttons.playSequence.style.display = 'flex';
-        buttons.playBackward.style.display = 'flex';
         buttons.pauseSequence.style.display = 'none';
     }
 
@@ -511,7 +527,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentActionIndex > 0) {
             showOverviewAction(currentActionIndex - 1);
         } else {
-            // At beginning, cycle to end
+            // At beginning, wrap to end
             showOverviewAction(episodeActions.length - 1);
         }
     });
@@ -521,7 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentActionIndex < episodeActions.length - 1) {
             showOverviewAction(currentActionIndex + 1);
         } else {
-            // At end, cycle to beginning
+            // At end, restart from beginning
             showOverviewAction(0);
         }
     });
@@ -605,11 +621,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function resetAgentPlayPage() {
         episodeImages = [];
         episodeActions = [];
+        episodeRewards = [];  // Reset rewards
         episodePositions = [];  // Reset positions
         episodeCollisions = [];  // Reset collisions
         currentActionIndex = 0;
         userFeedback = [];
         totalScore = 0;
+        isPlayingVideo = false;
         if (totalScoreElement) totalScoreElement.textContent = '0';
         if (buttons.playVideo) {
             buttons.playVideo.disabled = false;
@@ -685,6 +703,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Append new batch data to existing arrays
         if (data.images) episodeImages.push(...data.images);
         if (data.actions) episodeActions.push(...data.actions);
+        if (data.rewards) episodeRewards.push(...data.rewards);
         if (data.positions) episodePositions.push(...data.positions);
         if (data.collisions) episodeCollisions = data.collisions;  // Replace with latest
         if (data.score !== undefined) totalScore = data.score;
@@ -695,18 +714,34 @@ document.addEventListener('DOMContentLoaded', () => {
             totalScoreElement.textContent = totalScore.toFixed(1);
         }
 
-        // If this is the final batch, transition to playback
+        // If this is the final batch, start playback
         if (data.is_final && currentPage === 'agentPlay' && episodeImages.length > 0) {
             console.log('[episode_batch] Final batch received, starting playback with', episodeImages.length, 'frames');
-            playVideoSequence(canvases.agentVideo, episodeImages, 10, () => {
-                console.log('[episode_batch] Episode playback complete');
-                buttons.playVideo.textContent = 'Episode Complete';
-                setTimeout(() => {
-                    showPage('overview');
-                    populateActionDropdown();
-                    showOverviewAction(0);
-                }, 1500);
-            });
+            isPlayingVideo = true;
+            playVideoSequence(canvases.agentVideo, episodeImages, 10, 
+                () => {
+                    console.log('[episode_batch] Episode playback complete');
+                    isPlayingVideo = false;
+                    buttons.playVideo.textContent = 'Episode Complete';
+                    setTimeout(() => {
+                        showPage('overview');
+                        populateActionDropdown();
+                        showOverviewAction(0);
+                    }, 1500);
+                },
+                (frameIndex, totalFrames) => {
+                    // Update score using cumulative rewards up to current frame
+                    let currentScore = 0;
+                    for (let i = 0; i <= frameIndex && i < episodeRewards.length; i++) {
+                        currentScore += episodeRewards[i];
+                    }
+                    if (totalScoreElement) {
+                        totalScoreElement.textContent = currentScore.toFixed(1);
+                    }
+                }
+            );
+        } else if (data.is_final) {
+            console.log('[episode_batch] Final batch received');
         } else {
             console.log('[episode_batch] Batch accumulated, waiting for more...');
         }
@@ -733,15 +768,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (currentPage === 'agentPlay' && episodeImages.length > 0) {
                 console.log('[episode_data] Playing video sequence with', episodeImages.length, 'frames');
-                playVideoSequence(canvases.agentVideo, episodeImages, 10, () => {
-                    console.log('[episode_data] Episode playback complete');
-                    buttons.playVideo.textContent = 'Episode Complete';
-                    setTimeout(() => {
-                        showPage('overview');
-                        populateActionDropdown();
-                        showOverviewAction(0);
-                    }, 1500);
-                });
+                const finalScore = totalScore;
+                playVideoSequence(canvases.agentVideo, episodeImages, 10, 
+                    () => {
+                        console.log('[episode_data] Episode playback complete');
+                        buttons.playVideo.textContent = 'Episode Complete';
+                        setTimeout(() => {
+                            showPage('overview');
+                            populateActionDropdown();
+                            showOverviewAction(0);
+                        }, 1500);
+                    },
+                    (frameIndex, totalFrames) => {
+                        // Update score progressively during playback
+                        const progress = frameIndex / totalFrames;
+                        const currentScore = progress * finalScore;
+                        if (totalScoreElement) {
+                            totalScoreElement.textContent = currentScore.toFixed(1);
+                        }
+                    }
+                );
             } else {
                 console.warn('[episode_data] Not playing video:', {
                     currentPage,
@@ -865,6 +911,11 @@ document.addEventListener('DOMContentLoaded', () => {
         previousVideo: !!canvases.previousVideo,
         updatedVideo: !!canvases.updatedVideo
     });
+
+    // Hide backward button (not used in feedback interface)
+    if (buttons.playBackward) {
+        buttons.playBackward.style.display = 'none';
+    }
 
     populateActionDropdown();
     showPage('welcome');
