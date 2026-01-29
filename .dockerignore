@@ -10,6 +10,7 @@ __pycache__/
 *.egg-info/
 
 # Virtual environments
+.venv/
 env/
 venv/
 ENV/
@@ -17,6 +18,9 @@ env.bak/
 venv.bak/
 procgen_env_clone/
 procgen_env/
+
+# Envirabels
+.env
 
 # Conda environments
 environment.yml

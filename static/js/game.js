@@ -117,9 +117,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let playbackInterval = null;
 
     const ACTION_NAMES = {
-        0: "LEFT ←",
+        0: "LEFT",
         1: "UP",
-        2: "RIGHT →",
+        2: "RIGHT",
         3: "THROW",
     };
 
@@ -219,10 +219,24 @@ document.addEventListener('DOMContentLoaded', () => {
         playFrame();
     }
 
-    function drawActionSymbol(ctx, action, x, y, size = 30) {
+    function drawActionSymbol(ctx, action, x, y, size = 30, color = 'yellow', isOriginal = true) {
         ctx.save();
-        ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        
+        // Different colors for original vs feedback actions
+        if (isOriginal) {
+            ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';  // Yellow for original
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        } else{
+            if (color == 'blue') {
+            ctx.fillStyle = 'rgba(91, 91, 255, 0.8)';  // blue for feedback
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+            }
+            else{
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';  // red for feedback
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+            }
+        }
+        
         ctx.lineWidth = 2;
         ctx.font = `bold ${size}px Arial`;
         ctx.textAlign = 'center';
@@ -337,7 +351,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         console.log('[populateActionDropdown] Current agent action:', currentAgentAction, 'User selected:', userSelectedAction);
 
-        Object.entries(ACTION_NAMES).forEach(([actionId, actionName]) => {
+        // Simple action names without arrows
+        const ACTION_NAMES_SIMPLE = {
+            0: "LEFT",
+            1: "UP",
+            2: "RIGHT",
+            3: "THROW",
+        };
+
+        Object.entries(ACTION_NAMES_SIMPLE).forEach(([actionId, actionName]) => {
             const item = document.createElement('div');
             item.className = 'action-dropdown-item';
             const actionIdNum = parseInt(actionId);
@@ -346,6 +368,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (actionIdNum === currentAgentAction) {
                 item.classList.add('current-agent-action');
                 item.textContent = actionName + ' (Current)';
+                // // Add strikethrough if user gave different feedback
+                // if (userSelectedAction !== null && userSelectedAction !== currentAgentAction) {
+                //     item.style.textDecoration = 'line-through';
+                // }
             } else {
                 item.textContent = actionName;
             }
@@ -392,20 +418,26 @@ document.addEventListener('DOMContentLoaded', () => {
         if (index < 0 || index >= episodeActions.length) return;
 
         currentActionIndex = index;
-        const action = episodeActions[index];
+        const originalAction = episodeActions[index];
         const feedback = userFeedback.find(f => f.index === index);
-        const displayAction = feedback ? feedback.feedback_action : action;
+        const feedbackAction = feedback ? feedback.feedback_action : null;
 
-        // Get action name with fallback for undefined actions
-        const actionName = ACTION_NAMES[displayAction] || `Action ${displayAction}`;
-        actionText.textContent = actionName;
-        actionText.style.background = feedback ? '#ffe6e6' : '#fff';
+        // Update action text to show both actions if feedback exists
+        if (feedback && feedbackAction !== originalAction) {
+            actionText.textContent = `${ACTION_NAMES[originalAction]} → ${ACTION_NAMES[feedbackAction]}`;
+            actionText.style.background = 'rgba(91, 91, 255, 0.5)';
+        } else {
+            const actionName = ACTION_NAMES[originalAction] || `Action ${originalAction}`;
+            actionText.textContent = actionName;
+            actionText.style.background = '#fff';
+        }
 
-        // Draw image with action symbol
+        // Draw image with action symbol(s)
         if (episodeImages[index]) {
             drawImageOnCanvas(canvases.overviewCanvas, episodeImages[index]);
 
             // Draw action symbol overlay at bot position
+            
             setTimeout(() => {
                 const ctx = canvases.overviewCanvas.getContext('2d');
                 const canvasHeight = canvases.overviewCanvas.height;
@@ -413,45 +445,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Position symbol at bottom 1/10 of canvas
                 const symbolY = canvasHeight - (canvasHeight / 10);
-
-                // Calculate position: use episodePositions[0] as starting point, then track movements
                 let symbolX;
-                if (index === 0) {
-                    // First frame: use position from data or canvas center
-                    symbolX = episodePositions[0] + 20 !== undefined ? episodePositions[0] : canvasWidth / 2;
-                } else {
-                    // Subsequent frames: calculate from starting position + accumulated actions
-                    const startX = episodePositions[0] + 20 !== undefined ? episodePositions[0] : canvasWidth / 2;
-                    const moveSize = 35; // Same as Python backend
-                    const margin = 20; // Keep arrow within bounds
-                    
-                    // Calculate position based on all actions up to current index
-                    symbolX = startX;
-                    for (let i = 0; i < index; i++) {
-                        const action = episodeActions[i];
-                        if (action === 0) { // LEFT
-                            symbolX = Math.max(margin, symbolX - moveSize);
-                        } else if (action === 2) { // RIGHT
-                            symbolX = Math.min(canvasWidth - margin, symbolX + moveSize);
-                        }
-                        // UP (1) and THROW (3) don't change position
-                    }
-                }
 
-                const margin = 20; // pixels from edge
-                const shiftAmount = 35; // pixels to shift for left/right arrows
+                // // Calculate position: use episodePositions[0] as starting point, then track movements
                 
-                // Clamp the base position within bounds
-                symbolX = Math.max(margin, Math.min(symbolX, canvasWidth - margin));
-                
-                // Then shift arrow based on action direction, ensuring it stays in bounds
-                if (displayAction === 0) { // LEFT
-                    symbolX = Math.max(margin, symbolX - shiftAmount);
-                } else if (displayAction === 2) { // RIGHT
-                    symbolX = Math.min(canvasWidth - margin, symbolX + shiftAmount);
-                }
+                let initial_indent = 7;
+                // const margin = 20; // pixels from edge
+                // if (index === 0) {
+                //     // First frame: use position from data or canvas center
+                //     baseX = episodePositions[0] + initial_indent !== undefined ? episodePositions[0] : canvasWidth / 2;
+                // } else {
+                //     // Subsequent frames: calculate from starting position + accumulated actions
+                //     baseX = episodePositions[0] + initial_indent !== undefined ? episodePositions[0] : canvasWidth / 2;
+                //     const moveSize = 10; // Same as Python backend                    
+                //     // Calculate position based on all actions up to current index
+                //     for (let i = 0; i < index; i++) {
+                //         const action = episodeActions[i];
+                //         if (action === 0) { // LEFT
+                //             baseX = Math.max(margin, baseX - moveSize);
+                //         } else if (action === 2) { // RIGHT
+                //             baseX = Math.min(canvasWidth - margin, baseX + moveSize);
+                //         }
+                //         // UP (1) and THROW (3) don't change position
+                //     }
+                // }
 
-                drawActionSymbol(ctx, displayAction, symbolX, symbolY, 40);
+                // // Both arrows start from the same position
+                // const arrowX = Math.max(margin, Math.min(baseX, canvasWidth - margin));
+                const shift = 35;
+                let originalShift = 0;
+                let feedbackShift = 0;
+                if (originalAction == 0) {
+                    originalShift = -shift;
+                }
+                if (originalAction == 2){
+                    originalShift = shift;
+                }
+                if (feedbackAction == 0){
+                    feedbackShift = -shift;
+                }
+                if (feedbackAction == 2){
+                    feedbackShift = shift;
+                }
+                symbolX = episodePositions[index] + initial_indent;
+                // Draw original action (yellow arrow)
+                drawActionSymbol(ctx, originalAction, symbolX + originalShift, symbolY, 40, 'yellow', true);
+
+                // Draw feedback action (blue arrow) if it exists and differs from original
+                if (feedback && feedbackAction !== originalAction) {
+                    drawActionSymbol(ctx, feedbackAction, symbolX + feedbackShift, symbolY, 40, 'blue', false);
+                }
 
                 // Draw collision markers for all collisions up to current step
                 // drawCollisionMarkers(ctx, episodeCollisions, index);
@@ -628,6 +671,12 @@ document.addEventListener('DOMContentLoaded', () => {
         userFeedback = [];
         totalScore = 0;
         isPlayingVideo = false;
+        
+        // Update round number display
+        const roundNumberElement = document.getElementById('round-number');
+        if (roundNumberElement) {
+            roundNumberElement.textContent = `Round ${episodeCount + 1}`;
+        }
         if (totalScoreElement) totalScoreElement.textContent = '0';
         if (buttons.playVideo) {
             buttons.playVideo.disabled = false;

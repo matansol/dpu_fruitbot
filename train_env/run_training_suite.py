@@ -19,45 +19,42 @@ from typing import Optional, Dict, Any
 # ============================================================================
 
 # Base model to fine-tune from, or None to train from scratch
-BASE_MODEL: Optional[str] = r"models/fruitbot/20251231-174002_easy/ppo_final.zip"
+BASE_MODEL: Optional[str] = r"models/fruitbot/20260103-073446_easy/ppo_final.zip"
 # BASE_MODEL: Optional[str] = None  # Uncomment to train from scratch
 
 # Training configurations - easily add/remove parameter sets here
 TRAINING_CONFIGS = [
     {
         "name": "ignore food, open doors",
-        "description": "ignore food, open doors",
         "fruitbot_reward_negative": 0,
         "fruitbot_reward_positive": 0,
         "fruitbot_reward_wall_hit": -3,
         "fruitbot_reward_step": 0.1,
-        "fruitbot_door_prob_pct": 70,
+        "fruitbot_door_prob_pct": 80,
     },
     {
         "name": "all food, open doors",
-        "description": "all food, open doors",
-        "fruitbot_reward_negative": 3,
-        "fruitbot_reward_positive": 1,
+        "fruitbot_reward_negative": 2,
+        "fruitbot_reward_positive": 2,
+        "fruitbot_reward_wall_hit": -3,
+        "fruitbot_reward_step": 0,
+        "fruitbot_door_prob_pct": 80,
+    },
+    {
+        "name": "only fruits, open doors",
+        "fruitbot_reward_negative": 2,
+        "fruitbot_reward_positive": -2,
         "fruitbot_reward_wall_hit": -3,
         "fruitbot_reward_step": 0.1,
         "fruitbot_door_prob_pct": 80,
-    },
-#     {
-#         "name": "all food, open doors",
-#         "description": "all food, open doors",
-#         "fruitbot_reward_negative": 2,
-#         "fruitbot_reward_positive": 2,
-#         "fruitbot_reward_wall_hit": -3,
-#         "fruitbot_reward_step": 0.1,
-#         "fruitbot_door_prob_pct": 70,
-#     },    
+    },    
  ]
 
 # Common training hyperparameters (same for all configs)
 COMMON_PARAMS = {
     "env": "fruitbot",
     "use_source": False,
-    "n_envs": 32,
+    "n_envs": 24,
     "device": "cuda",
     "distribution_mode": "easy",
     "total_steps": 1000000,
@@ -110,7 +107,6 @@ def print_config_summary(config: Dict[str, Any], base_model: Optional[str]):
     """Print a summary of the training configuration."""
     print("\n" + "=" * 80)
     print(f"Configuration: {config['name']}")
-    print(f"Description: {config['description']}")
     print("=" * 80)
     print("\nReward Parameters:")
     print(f"  --fruitbot-reward-negative:   {config['fruitbot_reward_negative']}")

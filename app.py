@@ -38,6 +38,7 @@ from dpu_clf import *
 
 from functools import reduce
 from typing import Dict, Any, Optional, Tuple, List, Union
+from contextlib import asynccontextmanager
 
 # Procgen Fruitbot action constants
 # Procgen uses 15 discrete actions (standard for most Procgen games)
@@ -52,8 +53,25 @@ FRUITBOT_ACTIONS = {
 
 load_dotenv()
 
+# Background cleanup task
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events."""
+    # Startup: Start background cleanup task
+    cleanup_task = asyncio.create_task(cleanup_inactive_users())
+    print("[startup] Background cleanup task started")
+    
+    yield
+    
+    # Shutdown: Cancel background task
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        print("[shutdown] Background cleanup task stopped")
+
 # FastAPI application
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # Socket.IO configuration
 sio_config = {
@@ -85,6 +103,13 @@ async def reject_polling_middleware(request: Request, call_next):
         return Response("WebSocket-only mode: Polling transport disabled", status_code=400)
     
     response = await call_next(request)
+    
+    # Add cache control headers for static files to prevent browser caching
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    
     return response
 
 # Wrap the FastAPI app with Socket.IO's ASGI application
@@ -92,7 +117,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 # Global variable to control database saving
-save_to_db = True
+save_to_db = False
 
 # SQLAlchemy setup - only connect if save_to_db is enabled
 Base = declarative_base()
@@ -197,8 +222,7 @@ class GameControl:
         self.scores_lst = []
         self.last_obs = None
         self.episode_actions = []
-        self.episode_images = []
-        self.episode_frames = []  # Store raw RGB frames for video creation
+        self.episode_frames = []
         self.episode_obs = []
         self.episode_agent_locations = []
         self.user_id = user_id
@@ -220,6 +244,8 @@ class GameControl:
         self.env_seed_list: list = env_seed_list  # List of seeds for environments
         self.env_seed_used: list = []  # List of used environments
         self.current_config_index: int = 0
+        self.last_activity: float = time.time()  # Track last activity for cleanup
+        self.game_finished: bool = False  # Track if game is finished
         
         # Use centralized environment configurations from dpu_clf
         # This ensures consistency with evaluate_comprehensive.py
@@ -230,6 +256,52 @@ class GameControl:
             3-4: walls_fruits variants (g4_b0, g8_b0)
             5-8: walls_doors variants (d30_g6_b2, d30_g6_b6, d60_g6_b2, d60_g6_b6)
         """
+    
+    def clear_episode_data(self) -> None:
+        """Clear episode data to free memory after sending to client."""
+        import gc
+        self.episode_frames.clear()
+        self.episode_obs.clear()
+        self.episode_actions.clear()
+        self.episode_agent_locations.clear()
+        gc.collect()
+        print(f"[clear_episode_data] Cleared episode data for user {self.user_id}")
+    
+    def cleanup_agents(self) -> None:
+        """Remove previous agent to free memory."""
+        import gc
+        if self.prev_agent is not None:
+            del self.prev_agent
+            self.prev_agent = None
+            gc.collect()
+            print(f"[cleanup_agents] Removed previous agent for user {self.user_id}")
+    
+    def cleanup_all(self) -> None:
+        """Full cleanup: environment, agents, and episode data."""
+        import gc
+        # Close environment
+        if hasattr(self, 'env') and self.env is not None:
+            self.env.close()
+            del self.env
+            self.env = None
+        
+        # Remove agents
+        if self.ppo_agent is not None:
+            del self.ppo_agent
+            self.ppo_agent = None
+        if self.prev_agent is not None:
+            del self.prev_agent
+            self.prev_agent = None
+        
+        # Clear episode data
+        self.clear_episode_data()
+        
+        gc.collect()
+        print(f"[cleanup_all] Full cleanup completed for user {self.user_id}")
+    
+    def update_activity(self) -> None:
+        """Update last activity timestamp."""
+        self.last_activity = time.time()
 
     def create_new_env(
         self,
@@ -286,53 +358,6 @@ class GameControl:
         env = gym.make("procgen-fruitbot-v0", **config)
         return env, config_index, config_name
 
-    def create_structured_line_env(
-        self,
-        env_seed: int = 0,
-        *,
-        good_line_x_pct: int = 15,
-        bad_line_x_pct: int = 85,
-        line_padding_pct: int = 10,
-        num_good: int = 10,
-        num_bad: int = 10,
-        base_config_index: int = 0,
-        force_no_walls: bool = True,
-    ) -> Tuple[gym.Env, int, str]:
-        """Create a FruitBot env where good items are on a left-side line and bad items on a right-side line.
-
-        This keeps all existing environment controls intact by building on top of a base config
-        and only layering the new layout parameters. Defaults place fruits on 15%% x-position and
-        junk on 85%% x-position with a 10%% vertical padding.
-        """
-
-        base_idx = base_config_index if 0 <= base_config_index < len(self.env_configs) else 0
-        base_config = self.env_configs[base_idx].copy()
-        config_name = f"{base_config.get('name', 'custom')} + Structured Lines"
-        base_config.pop('name', None)
-        base_config.pop('option_name', None)  # Remove metadata fields
-        base_config.pop('option_variant', None)
-
-        layout_overrides = {
-            'fruitbot_layout_mode': 1,
-            'fruitbot_good_line_x_pct': good_line_x_pct,
-            'fruitbot_bad_line_x_pct': bad_line_x_pct,
-            'fruitbot_line_padding_pct': line_padding_pct,
-            'fruitbot_num_good_min': num_good,
-            'fruitbot_num_good_range': 1,
-            'fruitbot_num_bad_min': num_bad,
-            'fruitbot_num_bad_range': 1,
-        }
-
-        if force_no_walls:
-            layout_overrides['fruitbot_force_no_walls'] = True
-            layout_overrides['fruitbot_num_walls'] = 0
-            layout_overrides['fruitbot_wall_gap_pct'] = 100
-
-        seed = env_seed if env_seed else self.env_seed
-        merged_config = {**base_config, **layout_overrides}
-        merged_config['rand_seed'] = seed  # Update seed in config
-        env = gym.make("procgen-fruitbot-v0", **merged_config)
-        return env, base_idx, config_name
         
     @timeit
     def reset(self) -> np.ndarray:
@@ -375,27 +400,23 @@ class GameControl:
         # self.saved_env = copy.deepcopy(self.env)
         
         self.step_count = 0  # Reset step count
-        self.score = 0
-        
-        # Reset frame storage
-        self.episode_frames = []
-        
+        self.score = 0        
         return obs
 
     # @timeit
     def step(self, action: int, agent_action: bool = False) -> Dict[str, Any]:
         # Old Gym API returns 4 values, new Gym/Gymnasium returns 5
         t_start = time.time()
-        result = self.env.step(action)
+        observation, reward, done, info = self.env.step(action)
         t_env_step = time.time() - t_start
         
-        if len(result) == 5:
-            observation, reward, terminated, truncated, info = result
-            done = terminated or truncated
-        elif len(result) == 4:
-            observation, reward, done, info = result
-        else:
-            raise ValueError(f"Unexpected step() return length: {len(result)}")
+        # if len(result) == 5:
+        #     observation, reward, terminated, truncated, info = result
+        #     done = terminated or truncated
+        # elif len(result) == 4:
+        #     observation, reward, done, info = result
+        # else:
+        #     raise ValueError(f"Unexpected step() return length: {len(result)}")
 
         # Convert numpy types to Python native types for JSON serialization
         reward = float(reward)
@@ -405,7 +426,7 @@ class GameControl:
             self.episode_actions.append(int(action))
             self.scores_lst.append(self.score)
             return {
-                'image': None,
+                'image': image_to_base64(self.episode_frames[-1]) if self.episode_frames else None,
                 'episode': self.episode_num,
                 'reward': reward,
                 'done': done,
@@ -425,7 +446,6 @@ class GameControl:
         img_frame = info.get('rgb', observation)
         
         # Save raw frame for video creation
-        self.episode_frames.append(img_frame.copy())
         t_frame_copy = time.time() - t0
 
                 # Track collision positions with pixel conversion
@@ -446,20 +466,18 @@ class GameControl:
             self.collision_positions.append(collision_data)
             
             # print(f"Collision at world({collision_x:.2f}, {collision_y:.2f}), type={collision_type}")
-        
-        t0 = time.time()
-        image_base64 = image_to_base64(img_frame)
-        t_image_encode = time.time() - t0
-            
-            
-            # Entity types:
+        # Entity collision types:
             # 1 = BARRIER (wall)
             # 4 = BAD_OBJ (bad food)
             # 7 = GOOD_OBJ (good food)
             # 10 = LOCKED_DOOR
             # 12 = PRESENT (goal)
-            
-        self.episode_images.append(image_base64)
+        t0 = time.time()
+        image_base64 = image_to_base64(img_frame)
+        t_image_encode = time.time() - t0
+
+        last_image_base64 = image_to_base64(self.episode_frames[-1]) if self.episode_frames else image_base64
+        self.episode_frames.append(img_frame)
 
         self.current_obs = observation
         self.step_count += 1
@@ -470,7 +488,7 @@ class GameControl:
             print(f"[step] Step {self.step_count} timing: env_step={t_env_step*1000:.1f}ms, frame_copy={t_frame_copy*1000:.1f}ms, image_encode={t_image_encode*1000:.1f}ms, total={t_total*1000:.1f}ms")
                 
         return {
-            'image': image_base64,
+            'image': last_image_base64,
             'episode': self.episode_num,
             'reward': reward,
             'done': done,
@@ -504,11 +522,7 @@ class GameControl:
             try:
                 print(f"[get_initial_observation] Getting initial frame from step with NOOP action...")
                 # Take a NOOP step to get the first info dict with 'rgb'
-                result = self.env.step(1)  # NOOP/STAY action
-                if len(result) == 4:
-                    obs, reward, done, info = result
-                else:
-                    obs, reward, terminated, truncated, info = result
+                obs, reward, done, info = result = self.env.step(1)  # NOOP/STAY action
                 
                 # Get frame from info['rgb']
                 frame = info.get('rgb', None)
@@ -526,19 +540,20 @@ class GameControl:
                 raise
             
             # Save initial frame
-            self.episode_frames.append(frame.copy())
             
             print(f"[get_initial_observation] Converting frame to base64...")
             # Convert directly to base64 with resizing
-            image_base64 = image_to_base64(frame, resize=(512, 512))
-            self.episode_images = [image_base64]
+            self.episode_frames = [frame]
             self.episode_num += 1
             
             step_count = 0
             
+            # clean up old frames and images
+            import gc
+            gc.collect()
             print(f"User {self.user_id} Episode {self.episode_num} started {'_'*100}")
             return {
-                'image': image_base64,
+                'image': image_to_base64(frame),
                 'last_score': self.last_score,
                 'action': None,
                 'reward': 0,
@@ -682,14 +697,19 @@ class GameControl:
         target_models_indexes = self.models_distance[self.agent_index]
         print(f"\n[update_agent] Evaluating {len(target_models_indexes)} candidate agents...")
         
+        # Keep track of loaded agents for cleanup
+        loaded_agents = []
+        
         for model_i, agent_info in target_models_indexes.items():
             model_name = agent_info['name']
             agent_data = self.models_paths[model_i]
             path = agent_data['path']
             agent = load_agent(self.env, path)
+            loaded_agents.append(agent)
 
             agent_correctness = 0
             for action_feedback in user_feedback:
+                print(f"[update_agent] feedback index {action_feedback['index']}, action_feedback: {action_feedback}")
                 if action_feedback['index'] >= len(self.episode_obs):
                     print(f"[update_agent] WARNING: Feedback index {action_feedback['index']} out of bounds")
                     continue
@@ -755,6 +775,15 @@ class GameControl:
         print(f"  Previous agent index: {self.prev_agent_index}")
         print(f"  Current agent index: {self.agent_index}")
         print(f"  Agent changed: {self.prev_agent_index != self.agent_index}")
+        
+        # Clean up unused agents to free memory
+        selected_agent = self.ppo_agent
+        for agent in loaded_agents:
+            if agent is not selected_agent and agent is not self.prev_agent:
+                del agent
+        import gc
+        gc.collect()
+        print(f"[update_agent] Memory cleanup completed")
         print(f"{'='*80}\n")
         
         if self.prev_agent is None:
@@ -843,6 +872,16 @@ class GameControl:
         img_prev, _ = dpu_clf.draw_full_path(frames_list_prev, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=5, wall_collision_index=wall_collision_index2, use_rectangle=True)
         print(f"[agents_different_routs] Path image 2 size: {img_prev.size if img_prev else 'None'}")
 
+        # Close environments to free memory
+        env1.close()
+        env2.close()
+        del env1, env2
+        
+        # Clear frame lists to free memory (large numpy arrays)
+        del frames_list_updated, frames_list_prev
+        import gc
+        gc.collect()
+
         self.past_choices.add((self.models_paths[self.prev_agent_index]['name'], self.models_paths[self.agent_index]['name']))
         
         # Send images at original size without resizing
@@ -905,6 +944,7 @@ class GameControl:
 
 game_controls: Dict[str, GameControl] = {}
 sid_to_user: Dict[str, str] = {}
+user_to_sid: Dict[str, str] = {}  # Reverse mapping for cleanup
 
 # Procgen Fruitbot models configuration
 
@@ -1050,32 +1090,24 @@ async def connect(sid: str, environ: Dict[str, Any]) -> None:
 @sio.event
 async def disconnect(sid: str) -> None:
     print(f"Client disconnected: {sid}")
-    # Remove the sid mapping (but keep the game control instance for future reconnects)
+    
+    # Get user_id before removing mapping
+    user_id = sid_to_user.get(sid)
+    
+    # Remove sid mapping (but KEEP GameControl for reconnection)
     if sid in sid_to_user:
         del sid_to_user[sid]
+    
+    if user_id and user_id in user_to_sid:
+        del user_to_sid[user_id]
+    
+    # Do NOT remove GameControl - client may reconnect between episodes
+    # Cleanup will happen via:
+    # 1. finish_game event (explicit end)
+    # 2. Background task (20 min inactivity)
+    if user_id:
+        print(f"[disconnect] Client {user_id} disconnected, session preserved for reconnection")
 
-# def make_env_list():
-#     env_kwargs = {
-#             'food_diversity': 4,               # Variety of fruit sprites
-#             'fruitbot_num_walls': 5,
-#             'fruitbot_num_good_min': 10,
-#             'fruitbot_num_good_range': 0,
-#             'fruitbot_num_bad_min': 0,
-#             'fruitbot_num_bad_range': 0,
-#             'fruitbot_wall_gap_pct': 70,
-#             'fruitbot_door_prob_pct': 0,
-#             "use_discrete_action_wrapper": True,
-#             "use_stay_bonus_wrapper": False
-#         }
-
-#         # Create Procgen Fruitbot environment
-#     env_instance = gym.make(
-#         'procgen:procgen-fruitbot-v0',
-#         render_mode='rgb_array',
-#         distribution_mode='easy',  # or 'hard', 'exploration', 'memory'
-#         **env_kwargs
-#     )
-#     return [env_instance]
         
 
 @sio.on("start_game")
@@ -1177,6 +1209,7 @@ async def handle_send_action(sid: str, action: str) -> Dict[str, str]:
         return
         
     user_game = game_controls[user_id]
+    user_game.update_activity()  # Track activity
     response = user_game.handle_action(action)
     response["action"] = action_dir.get(action, "Unknown")
 
@@ -1215,28 +1248,45 @@ async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
         return
     user_game = game_controls[user_id]
     
-    # Check if 4 episodes have been completed
-    if user_game.episode_num >= 4:
-        print(f"[next_episode] User {user_id} has completed 4 episodes, ending game")
+    # Cleanup previous agent to save memory after each episode
+    user_game.cleanup_agents()
+    
+    # Check if 5 episodes have been completed
+    if user_game.episode_num >= 5:
+        print(f"[next_episode] User {user_id} has completed 5 episodes, ending game")
         print(f"[next_episode] Final agent index: {user_game.agent_index}")
+        
+        # Mark game as finished and cleanup
+        user_game.game_finished = True
+        user_game.cleanup_all()
+        
         await sio.emit("game_finished", {
             "total_episodes": user_game.episode_num,
             "final_agent_index": user_game.agent_index
         }, to=sid)
+        
+        # Remove GameControl after notifying client
+        if user_id in game_controls:
+            del game_controls[user_id]
+        if user_id in user_to_sid:
+            del user_to_sid[user_id]
+        
+        print(f"[next_episode] Cleaned up resources for completed game: {user_id}")
         return
     
     response = user_game.get_initial_observation()
     await sio.emit("game_update", response, to=sid)
 
-@sio.on("ppo_action")
-async def ppo_action(sid: str) -> None:
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
-        return
-    user_game = game_controls[user_id]
-    response = user_game.agent_action()
-    await finish_turn(response, user_game, sid)
+# @sio.on("ppo_action")
+# async def ppo_action(sid: str) -> None:
+#     user_id = sid_to_user.get(sid)
+#     if not user_id or user_id not in game_controls:
+#         await sio.emit("error", {"error": "User not found"}, to=sid)
+#         return
+#     user_game = game_controls[user_id]
+#     user_game.update_activity()  # Track activity
+#     response = user_game.agent_action()
+#     await finish_turn(response, user_game, sid)
 
 @sio.on("play_entire_episode")
 async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
@@ -1247,6 +1297,8 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         return
     
     user_game = game_controls[user_id]
+
+    print(f"[play_entire_episode] Starting the episode: framses={len(user_game.episode_frames)}, actions={len(user_game.episode_actions)}")
     
     # Reset episode data
     episode_images = []
@@ -1258,14 +1310,11 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
     
     # Bot tracking
     cx = 230  # Starting x position
-    if len(user_game.episode_frames) > 0:
-        cx = dpu_clf.find_x_on_row(user_game.episode_frames[0]) + 15
     move_size = 35  # Movement amount per action
     
     # Streaming configuration
     BATCH_SIZE = 20  # Send frames every 20 steps
     batch_start_index = 0
-    
     # Run the agent until episode is done
     done = False
     while not done and step_count < 1000:  # Safety limit
@@ -1278,8 +1327,8 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         done = result['done']
 
         # take only part of the observation (up action do not change much)
-        if action == 1 and result['step_count'] % 2 > 0 and result['reward'] == 0 and not done:
-            continue
+        # if action == 1 and result['step_count'] % 2 > 0 and result['reward'] == 0 and not done:
+        #     continue
         
         episode_images.append(result['image'])
         episode_actions.append(action)
@@ -1287,31 +1336,37 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         total_score = result['score']
         step_count = result['step_count']
         
-        # Update bot position based on action
-        if action == 0:  # LEFT
-            cx -= move_size
-        elif action == 2:  # RIGHT
-            cx += move_size
         # For other actions (1=UP/NOOP, 3=THROW), position stays same
-        if not done:
-            episode_positions.append(cx)
+        # if not done:
+            # episode_positions.append(cx)
         
-        # Stream batch every BATCH_SIZE steps
-        if len(episode_images) - batch_start_index >= BATCH_SIZE or done:
-            batch_data = {
-                'images': episode_images[batch_start_index:],
-                'actions': episode_actions[batch_start_index:],
-                'rewards': episode_rewards[batch_start_index:],
-                'positions': episode_positions[batch_start_index:],
-                'collisions': {}, #user_game.collision_positions,  # Add collision data
-                'score': float(total_score),  # Ensure native Python float
-                'steps': int(step_count),      # Ensure native Python int
-                'is_final': bool(done),        # Convert numpy bool_ to Python bool
-                'batch_start': int(batch_start_index)
-            }
-            await sio.emit("episode_batch", batch_data, to=sid)
-            batch_start_index = len(episode_images)
+        # # Stream batch every BATCH_SIZE steps
+        # if len(episode_images) - batch_start_index >= BATCH_SIZE or done:
+        #     if len(user_game.episode_frames) > 0:
+        #         time_b = time.time()
+        #         episode_positions = [dpu_clf.find_x_on_row(frame) + 15 for frame in user_game.episode_frames[batch_start_index:]]
+        #         time_a = time.time()
+        #         print(f"[play_entire_episode] Precomputed positions for {len(user_game.episode_frames[batch_start_index:])} frames in {time_a - time_b:.4f} seconds")
+        #         print(f"[play_entire_episode] positions: {episode_positions}")
+        #         print(f"actions batch: {episode_actions[batch_start_index:]}")
+
+        #     batch_data = {
+        #         'images': episode_images[batch_start_index:],
+        #         'actions': episode_actions[batch_start_index:],
+        #         'rewards': episode_rewards[batch_start_index:],
+        #         'positions': episode_positions[batch_start_index:],
+        #         'collisions': {}, #user_game.collision_positions,  # Add collision data
+        #         'score': float(total_score),  # Ensure native Python float
+        #         'steps': int(step_count),      # Ensure native Python int
+        #         'is_final': bool(done),        # Convert numpy bool_ to Python bool
+        #         'batch_start': int(batch_start_index)
+        #     }
+        #     await sio.emit("episode_batch", batch_data, to=sid)
+        #     batch_start_index = len(episode_images)
     
+    if len(user_game.episode_frames) > 0:
+        episode_positions = [dpu_clf.find_x_on_row(frame) + 15 for frame in user_game.episode_frames]
+
     # Send final episode_data event for compatibility (frontend can use batches or this)
     episode_data = {
         'images': episode_images,
@@ -1323,6 +1378,7 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         'steps': int(step_count)
     }
     
+    print(f"[play_entire_episode] Episode completed for user {user_id}: Steps={step_count}, Score={total_score}")
     await sio.emit("episode_data", episode_data, to=sid)
 
 
@@ -1392,15 +1448,26 @@ async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playe
     
     print(f"{'='*80}\n")
 
-@sio.on("finish_game")
-async def finish_game(sid: str) -> None:
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
-        return
-    user_game = game_controls[user_id]
-    scores = user_game.scores_lst
-    await sio.emit("finish_game", {"scores": scores}, to=sid)
+# @sio.on("finish_game")
+# async def finish_game(sid: str) -> None:
+#     user_id = sid_to_user.get(sid)
+#     if not user_id or user_id not in game_controls:
+#         await sio.emit("error", {"error": "User not found"}, to=sid)
+#         return
+    
+#     user_game = game_controls[user_id]
+#     user_game.game_finished = True
+#     scores = user_game.scores_lst
+    
+#     await sio.emit("finish_game", {"scores": scores}, to=sid)
+    
+#     # Clean up resources after game finishes
+#     print(f"[finish_game] Game finished for user {user_id}, cleaning up resources")
+#     user_game.cleanup_all()
+#     del game_controls[user_id]
+#     if user_id in user_to_sid:
+#         del user_to_sid[user_id]
+#     print(f"[finish_game] Resources freed for user {user_id}")
 
 @sio.on("start_cover_page")
 async def start_cover_page(sid: str) -> None:
@@ -1448,6 +1515,51 @@ async def agent_select(sid: str, data: Dict[str, Any]) -> None:
         print(f"User {user_id} keep with the new agent.")
     
     await sio.emit("agent_selection_result", {'agent_group': user_game.agent_index}, to=sid)
+
+# ---------------------- BACKGROUND CLEANUP TASK -------------------------
+async def cleanup_inactive_users():
+    """Background task to remove inactive users after 20 minutes."""
+    INACTIVE_TIMEOUT = 20 * 60  # 20 minutes in seconds
+    
+    while True:
+        try:
+            await asyncio.sleep(60)  # Check every minute
+            
+            current_time = time.time()
+            inactive_users = []
+            
+            # Find inactive users
+            for user_id, game_control in list(game_controls.items()):
+                time_inactive = current_time - game_control.last_activity
+                
+                if time_inactive > INACTIVE_TIMEOUT:
+                    inactive_users.append(user_id)
+                    print(f"[cleanup_inactive_users] User {user_id} inactive for {time_inactive/60:.1f} minutes")
+            
+            # Clean up inactive users
+            for user_id in inactive_users:
+                if user_id in game_controls:
+                    print(f"[cleanup_inactive_users] Removing inactive user {user_id}")
+                    game_control = game_controls[user_id]
+                    game_control.cleanup_all()
+                    del game_controls[user_id]
+                    
+                    # Clean up mappings
+                    if user_id in user_to_sid:
+                        sid = user_to_sid[user_id]
+                        if sid in sid_to_user:
+                            del sid_to_user[sid]
+                        del user_to_sid[user_id]
+                    
+                    print(f"[cleanup_inactive_users] Cleaned up user {user_id}")
+            
+            if inactive_users:
+                print(f"[cleanup_inactive_users] Removed {len(inactive_users)} inactive user(s)")
+                
+        except Exception as e:
+            print(f"[cleanup_inactive_users] Error: {e}")
+            import traceback
+            traceback.print_exc()
 
 # ---------------------- RUNNING THE APP -------------------------
 if __name__ == "__main__":
