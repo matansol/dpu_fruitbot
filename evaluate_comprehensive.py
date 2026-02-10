@@ -5,25 +5,21 @@ Comprehensive Parallel Evaluation Script for FruitBot Agents
 This script evaluates multiple trained models across specific environment options
 to find interesting setups that highlight behavioral differences between agents.
 
-Environment Options:
-  1. BASIC (no walls, all food):
-     - 0 walls with (good, bad) foods: (3,6), (6,2), (6,6) with range 1
-     
-  2. WALLS_FRUITS (walls, only good fruits):
-     - 4 walls with (good, bad) foods: (4,0), (8,0) with range 0
-     
-  3. WALLS_DOORS (walls with doors, all food):
-     - 3 walls with 20/60% door prob, (good, bad): (6,2), (6,6) with range 1
+Environment Configurations (from dpu_clf.ENV_CONFIG_DEFINITIONS):
+  Config 0: basic (no walls) - No walls, 4 good food, 4 bad food
+  Config 1: basic (with walls) - 3 walls, 3 good food, 3 bad food  
+  Config 2: walls_fruits - 4 walls, 6 good food, 0 bad food
+  Config 3: walls_doors - 3 walls with 80% door prob, 4 good/bad food
 
 Usage:
-    # Quick test with 10 seeds, find top 2 interesting per option
-    python evaluate_comprehensive.py --num-seeds 10 --top-k 2
+    # Quick test with 10 levels
+    python evaluate_comprehensive.py --num-levels 10
     
-    # Full evaluation with 100 seeds, find top 10 interesting per option
-    python evaluate_comprehensive.py --num-seeds 100 --top-k 10
+    # Full evaluation with 100 levels
+    python evaluate_comprehensive.py --num-levels 100
     
     # Run only specific option
-    python evaluate_comprehensive.py --num-seeds 10 --options basic walls_fruits
+    python evaluate_comprehensive.py --num-levels 10 --options basic walls_fruits
 """
 
 import os
@@ -50,14 +46,9 @@ from stable_baselines3 import PPO
 
 # Import centralized environment configurations from dpu_clf
 from dpu_clf import (
-    ENV_OPTION_BASIC,
-    ENV_OPTION_WALLS_FRUITS,
-    ENV_OPTION_WALLS_DOORS,
-    ALL_ENV_OPTIONS,
     ENV_CONFIG_DEFINITIONS,
     BASE_ENV_CONFIG,
-    get_env_config,
-    get_all_variants,
+    get_config_by_index,
 )
 
 # Suppress some warnings for cleaner output
@@ -67,12 +58,12 @@ warnings.filterwarnings('ignore', category=UserWarning)
 @dataclass
 class EnvConfig:
     """Environment configuration dataclass"""
-    seed: int
-    option_name: str = ""  # Name of the environment option (basic, walls_fruits, walls_doors)
-    option_variant: str = ""  # Specific variant within the option (e.g., "g3_b6", "d20_g6_b2")
+    start_level: int
+    config_name: str = ""  # Name of the configuration (e.g., "no_walls")
+    config_index: int = 0  # Index of the configuration (0-3)
     distribution_mode: str = "easy"
-    num_levels: int = 1
-    start_level: int = 0
+    num_levels: int = 1  # Always 1 so start_level determines the environment
+    rand_seed: int = 0  # Random seed for environment generation
     
     # FruitBot layout params
     fruitbot_num_walls: int = 3
@@ -116,37 +107,24 @@ class EnvConfig:
             "use_discrete_action_wrapper": True,
             "use_stay_bonus_wrapper": False,
             "stay_bonus": 0,
-            "rand_seed": self.seed,
+            "rand_seed": self.rand_seed,
         }
         return kwargs
     
-    def config_id(self) -> str:
-        """Generate a unique ID for this configuration"""
-        if self.option_name and self.option_variant:
-            return f"{self.option_name}_{self.option_variant}_s{self.seed}"
-        parts = [
-            f"s{self.seed}",
-            f"w{self.fruitbot_num_walls}",
-            f"g{self.fruitbot_num_good_min}-{self.fruitbot_num_good_range}",
-            f"b{self.fruitbot_num_bad_min}-{self.fruitbot_num_bad_range}",
-            f"d{self.fruitbot_door_prob_pct}",
-        ]
-
-        return "_".join(parts)
 
 
 @dataclass
 class EpisodeResult:
     """Single episode evaluation result"""
+    model_index: int
     model_name: str
     model_path: str
-    config_id: str
-    seed: int
+    start_level: int
     episode: int
     
-    # Environment option info
-    option_name: str
-    option_variant: str
+    # Environment config info
+    config_name: str
+    config_index: int
     
     # Performance metrics
     total_reward: float
@@ -154,6 +132,7 @@ class EpisodeResult:
     good_food_collected: int
     bad_food_touched: int
     wall_hits: int
+    completed: bool  # Did the agent get the completion reward?
     
     # Environment config (stored for analysis)
     distribution_mode: str
@@ -170,49 +149,42 @@ class EpisodeResult:
     eval_time_seconds: float = 0.0
 
 
-def discover_models(models_dir: Path) -> List[Tuple[str, Path]]:
+def discover_models(models_dir: Path) -> List[Tuple[int, str, Path]]:
     """
     Discover all trained models from the predefined easy_models_dict.
     
     Returns:
-        List of (model_name, model_path) tuples
+        List of (model_index, model_name, model_path) tuples
     """
     
     easy_models_dict = {
-    # Behavior 1: avoid walls and randomly collect food
-    0: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 0, 'name': 'random_food_avoid_walls'},
+    # Behavior 1: don't open doors and collect all food
+    1: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 1, 'name': 'no_doors_collect_all'},
+
+    # Behavior 2: do not open doors and collect only junk
+    2: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 2, 'name': 'no_doors_junk_only'},
     
-    # Behavior 2: 
-    1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
-    
-    # Behavior 3: don't open doors and collect all food
-    2: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 2, 'name': 'no_doors_collect_all'},
-    
-    # Behavior 4: don't open doors and collect only fruits
+    # Behavior 3: don't open doors and collect only fruits
     3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
     
-    # Behavior 5: collect only fruits and open doors
-    4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
+    # Behavior 4: open doors and avoid all foods  
+    4: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_avoid_food'},
     
-    # Behavior 6: open doors and collect all foods
-    5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
-    
-    # Behavior 7: open doors and avoid all foods  
-    6: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_avoid_food'},
-    
-    # Behavior 8: try to open doors and collect only fruits
-    7: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 7, 'name': 'only_fruits_tries_open_doors'},
+    # Behavior 5: open doors and collect all food - mostly fruits
+    5: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 5, 'name': 'mostly_fruits_open_doors'}, 
 
-    # Behavior 9: do not open doors and collect only junk
-    8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
+     # Behavior 6: collect only fruits and open doors
+    6: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_fruits_only'},
 }
+
     models = []
     for model_info in easy_models_dict.values():
         if model_info is not None:
             model_path = Path(model_info['path'])
             model_name = model_info['name']
+            model_index = model_info['index']
             if model_path.exists():
-                models.append((model_name, model_path))
+                models.append((model_index, model_name, model_path))
             else:
                 print(f"Warning: Model file not found: {model_path}")
     
@@ -220,11 +192,12 @@ def discover_models(models_dir: Path) -> List[Tuple[str, Path]]:
 
 
 def generate_env_configs(
-    num_seeds: int = 100,
-    seed_offset: int = 1000,
+    num_levels: int = 100,
+    level_offset: int = 0,
     include_variations: bool = True,
     quick_mode: bool = False,
     options: Optional[List[str]] = None,
+    rand_seed: int = 0,
 ) -> List[EnvConfig]:
     """
     Generate environment configurations based on specific option types.
@@ -232,57 +205,58 @@ def generate_env_configs(
     Uses centralized configuration definitions from dpu_clf.py.
     
     Args:
-        num_seeds: Number of random seeds to use per variant
-        seed_offset: Starting seed offset
+        num_levels: Number of different levels to use per variant
+        level_offset: Starting level offset
         include_variations: Ignored (kept for API compatibility)
         quick_mode: Ignored (kept for API compatibility)
         options: List of option names to include (default: all)
+        rand_seed: Random seed for environment generation (default: 0)
     
     Returns:
         List of EnvConfig objects
     """
     if options is None:
-        options = ALL_ENV_OPTIONS
+        options = []
     
     configs = []
-    seeds = list(range(seed_offset, seed_offset + num_seeds))
+    levels = list(range(level_offset, level_offset + num_levels))
     
-    for option_name in options:
-        if option_name not in ENV_CONFIG_DEFINITIONS:
-            print(f"Warning: Unknown option {option_name}, skipping")
-            continue
-            
-        option_def = ENV_CONFIG_DEFINITIONS[option_name]
-        base_params = option_def['base_params']
+    # Iterate through flat indexed ENV_CONFIG_DEFINITIONS
+    for config_idx, config_def in ENV_CONFIG_DEFINITIONS.items():
+        config_name = config_def['option_name']
         
-        for seed in seeds:
-            for variant in option_def['variants']:
-                # Build config from centralized definitions
-                config = EnvConfig(
-                    seed=seed,
-                    start_level=seed,
-                    option_name=option_name,
-                    option_variant=variant['name'],
-                    fruitbot_num_walls=base_params.get('fruitbot_num_walls', 3),
-                    fruitbot_force_no_walls=base_params.get('fruitbot_force_no_walls', False),
-                    fruitbot_num_good_min=variant.get('fruitbot_num_good_min', 5),
-                    fruitbot_num_good_range=base_params.get('fruitbot_num_good_range', 1),
-                    fruitbot_num_bad_min=variant.get('fruitbot_num_bad_min', 5),
-                    fruitbot_num_bad_range=base_params.get('fruitbot_num_bad_range', 1),
-                    fruitbot_wall_gap_pct=base_params.get('fruitbot_wall_gap_pct', 40),
-                    fruitbot_door_prob_pct=variant.get('fruitbot_door_prob_pct', base_params.get('fruitbot_door_prob_pct', 0)),
-                    food_diversity=BASE_ENV_CONFIG.get('food_diversity', 4),
-                )
-                configs.append(config)
+        # Generate configs for all levels
+        for level in levels:
+            # Get the full config from dpu_clf (includes BASE_ENV_CONFIG merged)
+            full_config = get_config_by_index(config_idx, rand_seed)
+            
+            # Create EnvConfig from the full config
+            # Extract the fruitbot params from full_config
+            config = EnvConfig(
+                start_level=level,
+                config_name=config_name,
+                config_index=config_idx,
+                distribution_mode=full_config.get('distribution_mode', 'easy'),
+                num_levels=1,  # Always 1 so start_level determines the environment
+                rand_seed=rand_seed,
+                fruitbot_num_walls=config_def.get('fruitbot_num_walls', 0),
+                fruitbot_num_good_min=config_def.get('fruitbot_num_good_min', 4),
+                fruitbot_num_good_range=config_def.get('fruitbot_num_good_range', 0),
+                fruitbot_num_bad_min=config_def.get('fruitbot_num_bad_min', 4),
+                fruitbot_num_bad_range=config_def.get('fruitbot_num_bad_range', 0),
+                fruitbot_wall_gap_pct=config_def.get('fruitbot_wall_gap_pct', 0),
+                fruitbot_door_prob_pct=config_def.get('fruitbot_door_prob_pct', 0),
+                food_diversity=full_config.get('food_diversity', 6),
+                fruitbot_force_no_walls=config_def.get('fruitbot_force_no_walls', False),
+                fruitbot_reward_positive=full_config.get('fruitbot_reward_positive', 2.0),
+                fruitbot_reward_negative=full_config.get('fruitbot_reward_negative', -1.0),
+                fruitbot_reward_wall_hit=full_config.get('fruitbot_reward_wall_hit', -3.0),
+                fruitbot_reward_completion=full_config.get('fruitbot_reward_completion', 5.0),
+                fruitbot_reward_step=full_config.get('fruitbot_reward_step', 0.0),
+            )
+            configs.append(config)
     
     return configs
-
-
-def get_option_variants(option_name: str) -> List[str]:
-    """Get all variant names for a given option using centralized definitions."""
-    if option_name in ENV_CONFIG_DEFINITIONS:
-        return [v['name'] for v in ENV_CONFIG_DEFINITIONS[option_name]['variants']]
-    return []
 
 
 def evaluate_single_episode(
@@ -363,6 +337,7 @@ def evaluate_single_episode(
 
 
 def evaluate_model_on_config(
+    model_index: int,
     model_name: str,
     model_path: Path,
     config: EnvConfig,
@@ -372,6 +347,7 @@ def evaluate_model_on_config(
     Evaluate a model on a specific environment configuration.
     
     Args:
+        model_index: Index of the model
         model_name: Name of the model
         model_path: Path to the model file
         config: Environment configuration
@@ -413,6 +389,7 @@ def evaluate_model_on_config(
             good_food = 0
             bad_food = 0
             wall_hits = 0
+            completed = False
             
             TOL = 1e-3
             
@@ -435,31 +412,34 @@ def evaluate_model_on_config(
                     total_reward += r
                     steps += 1
                     
-                    # Track food/wall events
+                    # Track food/wall events and completion
                     if np.isclose(r, config.fruitbot_reward_positive, atol=TOL, rtol=0.0):
                         good_food += 1
                     elif np.isclose(r, config.fruitbot_reward_negative, atol=TOL, rtol=0.0):
                         bad_food += 1
                     elif np.isclose(r, config.fruitbot_reward_wall_hit, atol=TOL, rtol=0.0):
                         wall_hits += 1
+                    elif np.isclose(r, config.fruitbot_reward_completion, atol=TOL, rtol=0.0):
+                        completed = True
             
             env.close()
             
             ep_time = time.time() - ep_start
             
             result = EpisodeResult(
+                model_index=model_index,
                 model_name=model_name,
                 model_path=str(model_path),
-                config_id=config.config_id(),
-                seed=config.seed,
+                start_level=config.start_level,
                 episode=ep,
-                option_name=config.option_name,
-                option_variant=config.option_variant,
+                config_name=config.config_name,
+                config_index=config.config_index,
                 total_reward=total_reward,
                 episode_length=steps,
                 good_food_collected=good_food,
                 bad_food_touched=bad_food,
                 wall_hits=wall_hits,
+                completed=completed,
                 distribution_mode=config.distribution_mode,
                 num_walls=config.fruitbot_num_walls,
                 num_good_min=config.fruitbot_num_good_min,
@@ -474,7 +454,7 @@ def evaluate_model_on_config(
             results.append(result)
             
     except Exception as e:
-        print(f"Error evaluating {model_name} on config {config.config_id()}: {e}")
+        print(f"Error evaluating {model_name}: {e}")
         # Return empty results on error
     
     return results
@@ -489,8 +469,9 @@ def worker_evaluate_batch(args: Tuple) -> List[EpisodeResult]:
     tasks, num_episodes = args
     all_results = []
     
-    for model_name, model_path, config in tasks:
+    for model_index, model_name, model_path, config in tasks:
         results = evaluate_model_on_config(
+            model_index=model_index,
             model_name=model_name,
             model_path=model_path,
             config=config,
@@ -502,7 +483,7 @@ def worker_evaluate_batch(args: Tuple) -> List[EpisodeResult]:
 
 
 def run_parallel_evaluation(
-    models: List[Tuple[str, Path]],
+    models: List[Tuple[int, str, Path]],
     configs: List[EnvConfig],
     num_episodes_per_config: int = 1,
     num_workers: Optional[int] = None,
@@ -512,7 +493,7 @@ def run_parallel_evaluation(
     Run parallel evaluation across all model-config combinations.
     
     Args:
-        models: List of (model_name, model_path) tuples
+        models: List of (model_index, model_name, model_path) tuples
         configs: List of EnvConfig objects
         num_episodes_per_config: Episodes to run per model-config pair
         num_workers: Number of parallel workers (default: CPU count - 1)
@@ -526,9 +507,9 @@ def run_parallel_evaluation(
     
     # Generate all task combinations
     all_tasks = []
-    for model_name, model_path in models:
+    for model_index, model_name, model_path in models:
         for config in configs:
-            all_tasks.append((model_name, model_path, config))
+            all_tasks.append((model_index, model_name, model_path, config))
     
     total_tasks = len(all_tasks)
     print(f"\nTotal evaluation tasks: {total_tasks}")
@@ -583,7 +564,8 @@ def run_parallel_evaluation(
     print(f"\nEvaluation complete!")
     print(f"Total time: {total_time:.1f}s")
     print(f"Total episodes: {len(all_results)}")
-    print(f"Rate: {len(all_results)/total_time:.2f} episodes/second")
+    if total_time > 0:
+        print(f"Rate: {len(all_results)/total_time:.2f} episodes/second")
     
     return all_results
 
@@ -637,10 +619,10 @@ def generate_summary_report(results: List[EpisodeResult], output_dir: Path) -> N
         'good_food_collected': ['mean', 'std'],
         'bad_food_touched': ['mean', 'std'],
         'wall_hits': ['mean', 'std'],
-        'seed': 'count',
+        'start_level': 'count',
     }).round(3)
     model_summary.columns = ['_'.join(col).strip() for col in model_summary.columns.values]
-    model_summary = model_summary.rename(columns={'seed_count': 'num_episodes'})
+    model_summary = model_summary.rename(columns={'start_level_count': 'num_episodes'})
     model_summary = model_summary.sort_values('total_reward_mean', ascending=False)
     
     # Save model summary
@@ -649,7 +631,7 @@ def generate_summary_report(results: List[EpisodeResult], output_dir: Path) -> N
     print(f"\nModel summary saved to: {model_summary_path}")
     
     # Config-level summary by option/variant
-    config_summary = df.groupby(['option_name', 'option_variant', 'seed']).agg({
+    config_summary = df.groupby(['config_name', 'start_level']).agg({
         'total_reward': ['mean', 'std'],
         'good_food_collected': 'mean',
         'bad_food_touched': 'mean',
@@ -679,98 +661,86 @@ def generate_summary_report(results: List[EpisodeResult], output_dir: Path) -> N
     for model_name, std in variance_ranking.head().items():
         print(f"  {model_name}: std={std:.2f}")
     
-    # Find environments where models disagree the most (by option/variant/seed)
-    print("\n--- Most Discriminative Environments (by option/variant) ---")
+    # Find environments where models disagree the most (by config/level)
+    print("\n--- Most Discriminative Environments (by config) ---")
     print("(High std across models = environments that differentiate agents)")
-    env_discrimination = df.groupby(['option_name', 'option_variant', 'seed'])['total_reward'].std().sort_values(ascending=False)
+    env_discrimination = df.groupby(['config_name', 'start_level'])['total_reward'].std().sort_values(ascending=False)
     for idx, std in env_discrimination.head(10).items():
-        opt, var, seed = idx
-        print(f"  {opt}/{var}/seed{seed}: cross-model std={std:.2f}")
+        config_name, level = idx
+        print(f"  {config_name}/level{level}: cross-model std={std:.2f}")
 
 
-def find_interesting_seeds(
+def analyze_level_completion(
     results: List[EpisodeResult],
-    top_k: int = 10,
     output_dir: Optional[Path] = None,
-) -> Dict[str, Dict[str, List[int]]]:
+) -> pd.DataFrame:
     """
-    Find the most interesting seeds for each option/variant combination.
-    
-    "Interesting" is defined as seeds where there is high variance in agent
-    performance (i.e., environments that differentiate between agents).
+    Analyze levels by counting how many models completed them without hitting walls.
     
     Args:
         results: List of EpisodeResult objects
-        top_k: Number of top seeds to select per variant
         output_dir: Directory to save the results
     
     Returns:
-        Dict mapping option_name -> variant -> list of top_k seed numbers
+        DataFrame with level completion statistics
     """
     df = pd.DataFrame([asdict(r) for r in results])
     
     if len(df) == 0:
         print("No results to analyze")
-        return {}
-    
-    interesting_seeds = {}
+        return pd.DataFrame()
     
     print("\n" + "="*60)
-    print(f"FINDING TOP {top_k} INTERESTING SEEDS PER VARIANT")
+    print("LEVEL COMPLETION ANALYSIS")
     print("="*60)
     
-    # Group by option_name and option_variant
-    for option_name in df['option_name'].unique():
-        option_df = df[df['option_name'] == option_name]
-        interesting_seeds[option_name] = {}
-        
-        print(f"\n--- Option: {option_name} ---")
-        
-        for variant in option_df['option_variant'].unique():
-            variant_df = option_df[option_df['option_variant'] == variant]
-            
-            # Calculate variance across models for each seed
-            seed_variance = variant_df.groupby('seed')['total_reward'].std().sort_values(ascending=False)
-            
-            # Get top-k seeds with highest variance
-            top_seeds = seed_variance.head(top_k).index.tolist()
-            interesting_seeds[option_name][variant] = top_seeds
-            
-            print(f"\n  Variant: {variant}")
-            print(f"  Top {top_k} seeds (by cross-model std):")
-            for i, seed in enumerate(top_seeds):
-                std_val = seed_variance[seed]
-                # Get model scores for this seed
-                seed_df = variant_df[variant_df['seed'] == seed]
-                scores = seed_df.groupby('model_name')['total_reward'].mean()
-                min_score = scores.min()
-                max_score = scores.max()
-                print(f"    {i+1}. Seed {seed}: std={std_val:.2f}, range=[{min_score:.1f}, {max_score:.1f}]")
+    # For each level, count how many models completed it without hitting walls
+    level_stats = []
     
-    # Save interesting seeds to file
+    for (config_name, level), level_df in df.groupby(['config_name', 'start_level']):
+        # Count models that completed and didn't hit walls
+        completed_no_walls = level_df[(level_df['completed'] == True) & (level_df['wall_hits'] == 0)]
+        num_completed_no_walls = completed_no_walls['model_index'].nunique()
+        
+        # Count models that completed (regardless of wall hits)
+        completed = level_df[level_df['completed'] == True]
+        num_completed = completed['model_index'].nunique()
+        
+        # Count models that hit walls
+        hit_walls = level_df[level_df['wall_hits'] > 0]
+        num_hit_walls = hit_walls['model_index'].nunique()
+        
+        # Total models tested
+        total_models = level_df['model_index'].nunique()
+        
+        level_stats.append({
+            'config_name': config_name,
+            'start_level': level,
+            'total_models': total_models,
+            'models_completed': num_completed,
+            'models_completed_no_walls': num_completed_no_walls,
+            'models_hit_walls': num_hit_walls,
+            'completion_rate': num_completed / total_models if total_models > 0 else 0,
+            'no_wall_completion_rate': num_completed_no_walls / total_models if total_models > 0 else 0,
+        })
+    
+    level_completion_df = pd.DataFrame(level_stats)
+    level_completion_df = level_completion_df.sort_values('models_completed_no_walls', ascending=False)
+    
+    # Save to file
     if output_dir:
-        seeds_path = output_dir / "interesting_seeds.json"
-        with open(seeds_path, 'w') as f:
-            json.dump(interesting_seeds, f, indent=2)
-        print(f"\nInteresting seeds saved to: {seeds_path}")
-        
-        # Also save as a flat CSV for easy viewing
-        rows = []
-        for option, variants in interesting_seeds.items():
-            for variant, seeds in variants.items():
-                for rank, seed in enumerate(seeds, 1):
-                    rows.append({
-                        'option_name': option,
-                        'option_variant': variant,
-                        'rank': rank,
-                        'seed': seed,
-                    })
-        seeds_df = pd.DataFrame(rows)
-        seeds_csv_path = output_dir / "interesting_seeds.csv"
-        seeds_df.to_csv(seeds_csv_path, index=False)
-        print(f"Interesting seeds CSV saved to: {seeds_csv_path}")
+        levels_csv_path = output_dir / "level_completion_analysis.csv"
+        level_completion_df.to_csv(levels_csv_path, index=False)
+        print(f"\nLevel completion analysis saved to: {levels_csv_path}")
     
-    return interesting_seeds
+    # Print summary
+    print("\n--- Top 10 Levels by Models Completing Without Walls ---")
+    for idx, row in level_completion_df.head(10).iterrows():
+        print(f"  {row['config_name']}/level{row['start_level']}: "
+              f"{row['models_completed_no_walls']}/{row['total_models']} models "
+              f"({row['no_wall_completion_rate']*100:.0f}%)")
+    
+    return level_completion_df
 
 
 def main():
@@ -779,19 +749,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Environment Options:
-  basic         - 0 walls, foods: (3,6), (6,2), (6,6) with range 1
-  walls_fruits  - 4 walls, only good foods: (4,0), (8,0) with range 0
-  walls_doors   - 3 walls, 30/60%% doors, foods: (6,2), (6,6) with range 1
+  OPTION: BASIC
+  ────────────────────────────────────────────────────────────────────────────────
+    [0] g4_b4 - Walls: 0 | Force no walls: True
+    [1] g4_b4 - Walls: 3 | Force no walls: False
+
+  OPTION: WALLS_FRUITS
+  ────────────────────────────────────────────────────────────────────────────────
+    [2] g6_b0 - Walls: 4 | Force no walls: False
+
+  OPTION: WALLS_DOORS
+  ────────────────────────────────────────────────────────────────────────────────
+    [3] d80_g4_b4 - Walls: 3 (with 80% door prob) | Force no walls: False
 
 Examples:
-    # Quick test with 10 seeds, find top 2 interesting per option
-    python evaluate_comprehensive.py --num-seeds 10 --top-k 2
+    # Quick test with 10 levels, find top 2 interesting per option
+    python evaluate_comprehensive.py --num-levels 10 --top-k 2
     
-    # Full evaluation with 100 seeds, find top 10 interesting per option
-    python evaluate_comprehensive.py --num-seeds 100 --top-k 10
+    # Full evaluation with 100 levels, find top 10 interesting per option
+    python evaluate_comprehensive.py --num-levels 100 --top-k 10
     
     # Run only specific options
-    python evaluate_comprehensive.py --num-seeds 10 --options basic walls_fruits
+    python evaluate_comprehensive.py --num-levels 10 --options basic walls_fruits
         """
     )
     
@@ -803,16 +782,18 @@ Examples:
                         help="Output format")
     
     # Evaluation parameters
-    parser.add_argument("--num-seeds", type=int, default=50,
-                        help="Number of different seeds to evaluate per variant")
-    parser.add_argument("--seed-offset", type=int, default=1000,
-                        help="Starting seed offset")
+    parser.add_argument("--num-levels", type=int, default=100,
+                        help="Number of different levels to evaluate per variant")
+    parser.add_argument("--level-offset", type=int, default=0,
+                        help="Starting level offset")
+    parser.add_argument("--rand-seed", type=int, default=0,
+                        help="Random seed for environment generation (default: 0)")
     parser.add_argument("--top-k", type=int, default=5,
-                        help="Number of top interesting seeds to find per variant")
+                        help="(Deprecated) Kept for compatibility")
     parser.add_argument("--episodes-per-config", type=int, default=1,
                         help="Number of episodes per model-config pair")
     parser.add_argument("--options", type=str, nargs="+", default=None,
-                        choices=ALL_ENV_OPTIONS,
+                        choices=[],
                         help="Which environment options to evaluate (default: all)")
     
     # Parallelization
@@ -842,26 +823,24 @@ Examples:
         return
     
     print(f"\nDiscovered {len(models)} models:")
-    for name, path in models:
-        print(f"  - {name}")
+    for idx, name, path in models:
+        print(f"  - [{idx}] {name}")
     
     # Generate environment configs
-    options_to_use = args.options if args.options else ALL_ENV_OPTIONS
     configs = generate_env_configs(
-        num_seeds=args.num_seeds,
-        seed_offset=args.seed_offset,
-        options=options_to_use,
+        num_levels=args.num_levels,
+        level_offset=args.level_offset,
+        rand_seed=args.rand_seed,
     )
     
-    print(f"\nEnvironment options to evaluate: {options_to_use}")
-    print(f"Seeds per variant: {args.num_seeds}")
+    print(f"Levels per variant: {args.num_levels}")
     print(f"Total configurations: {len(configs)}")
     
     # Count configs per option
     from collections import Counter
-    option_counts = Counter(c.option_name for c in configs)
-    for opt, count in sorted(option_counts.items()):
-        print(f"  - {opt}: {count} configs")
+    config_counts = Counter(c.config_name for c in configs)
+    for config_name, count in sorted(config_counts.items()):
+        print(f"  - {config_name}: {count} configs")
     
     # Estimate total work
     total_episodes = len(models) * len(configs) * args.episodes_per_config
@@ -880,19 +859,31 @@ Examples:
     output_path = Path(args.output)
     save_results(results, output_path, format=args.format)
     
+    # Save detailed models_result.csv only if we have results
+    if len(results) > 0:
+        models_result_path = output_path.parent / "models_result.csv"
+        df_detailed = pd.DataFrame([asdict(r) for r in results])
+        # Select key columns for models_result
+        cols_to_save = ['model_index', 'model_name', 'config_name', 'config_index', 'start_level', 
+                        'total_reward', 'good_food_collected', 'bad_food_touched', 
+                        'wall_hits', 'completed', 'episode_length']
+        df_detailed[cols_to_save].to_csv(models_result_path, index=False)
+        print(f"\nDetailed models results saved to: {models_result_path}")
+    else:
+        print("\nNo results to save. Check configuration and model paths.")
+    
     # Generate summary report
-    if not args.no_summary:
+    if not args.no_summary and len(results) > 0:
         generate_summary_report(results, output_path.parent)
     
-    # Find interesting seeds
-    interesting_seeds = find_interesting_seeds(
-        results,
-        top_k=args.top_k,
-        output_dir=output_path.parent,
-    )
+    # Analyze level completion
+    if len(results) > 0:
+        level_completion_df = analyze_level_completion(
+            results,
+            output_dir=output_path.parent,
+        )
     
     print(f"\nFinished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"interesting_seeds = {interesting_seeds}")
 
 
 if __name__ == "__main__":

@@ -923,6 +923,15 @@ document.addEventListener('DOMContentLoaded', () => {
             updatedAgentImage.src = img1.src;
             previousAgentImage.src = img2.src;
 
+            // Scroll to bottom of images once they load
+            updatedAgentImage.onload = function() {
+                const container = this.parentElement;
+                container.scrollTop = container.scrollHeight;
+            };
+            previousAgentImage.onload = function() {
+                const container = this.parentElement;
+                container.scrollTop = container.scrollHeight;
+            };
 
             // Show compare page after images are set
             showPage('compare');

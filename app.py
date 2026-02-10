@@ -117,7 +117,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 # Global variable to control database saving
-save_to_db = False
+save_to_db = True
 
 # SQLAlchemy setup - only connect if save_to_db is enabled
 Base = declarative_base()
@@ -224,7 +224,6 @@ class GameControl:
         self.episode_actions = []
         self.episode_frames = []
         self.episode_obs = []
-        self.episode_agent_locations = []
         self.user_id = user_id
         self.wall_penalty: float = -3.0
         self.last_score: float = 0.0
@@ -241,7 +240,7 @@ class GameControl:
         self.past_choices: set = set()  # To avoid repeating the same choice
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
-        self.env_seed_list: list = env_seed_list  # List of seeds for environments
+        self.env_seed_list: list = list(range(100, 1000))  # List of seeds for environments
         self.env_seed_used: list = []  # List of used environments
         self.current_config_index: int = 0
         self.last_activity: float = time.time()  # Track last activity for cleanup
@@ -263,7 +262,6 @@ class GameControl:
         self.episode_frames.clear()
         self.episode_obs.clear()
         self.episode_actions.clear()
-        self.episode_agent_locations.clear()
         gc.collect()
         print(f"[clear_episode_data] Cleared episode data for user {self.user_id}")
     
@@ -306,11 +304,10 @@ class GameControl:
     def create_new_env(
         self,
         env_seed: int = 0,
-        env_option = None,
         config_index = None,
+        start_level: int = 0,
         *,
         layout_mode: Optional[int] = None,
-        layout_overrides: Optional[Dict[str, Any]] = None,
         force_no_walls: Optional[bool] = None,
     ) -> Tuple[gym.Env, int, str]:
         """Create a new environment instance with specified configuration.
@@ -327,34 +324,30 @@ class GameControl:
         """
         # Select random config if not specified
         if config_index is None:
-            if env_option is not None:
-                config_index = random.choice(ENV_OPTION_TO_CONFIG_INDEXES.get(env_option, []))
-            else:
-                config_index = random.randint(0, len(self.env_configs) - 1)
+            config_index = random.randint(0, len(self.env_configs) - 1)
             
         
         # Get config and make a copy to avoid modifying the original
         config = self.env_configs[config_index].copy()
         config_name = config.pop('name')  # Remove name from kwargs
         config.pop('option_name', None)  # Remove metadata fields not needed by gym.make
-        config.pop('option_variant', None)
+        config.pop('option_variant', None)  # Remove variant metadata field
 
-        # Apply optional structured layout controls without changing existing presets
-        if layout_mode is not None:
-            config['fruitbot_layout_mode'] = layout_mode
+        # # Apply optional structured layout controls without changing existing presets
+        # if layout_mode is not None:
+        #     config['fruitbot_layout_mode'] = layout_mode
         if force_no_walls is not None:
             config['fruitbot_force_no_walls'] = bool(force_no_walls)
             if force_no_walls:
                 config['fruitbot_num_walls'] = 0
                 config.setdefault('fruitbot_wall_gap_pct', 100)
-        if layout_overrides:
-            # Only merge known keys; pass-through is OK because gym.make forwards to procgen
-            config.update(layout_overrides)
         
         print(f"[create_new_env] Using config: {config_name} (index {config_index})")
         
         seed = env_seed if env_seed else self.env_seed
         config['rand_seed'] = seed  # Update seed in config
+        config['num_levels'] = 1         # EnvConfig default
+        config['start_level'] = start_level
         env = gym.make("procgen-fruitbot-v0", **config)
         return env, config_index, config_name
 
@@ -366,36 +359,35 @@ class GameControl:
         # Set the environment FIRST before calling update_agent
         self.env_seed = random.choice(optinal_seed)
         self.env_seed_used.append(self.env_seed)
+ 
+ # ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FODD", "WALLS_FRUIT" ,"WALLS_DOORS"]
+
+        config_order = [0, 2, 3, 1, 3]
+        self.current_config_index = config_order[self.episode_num % len(config_order)]
+        # if self.episode_num == 1:
+        #     self.current_config_index = 1
+        # elif self.episode_num == 2:
+        #     self.current_config_index = 2
+        # elif self.episode_num == 3:
+        #     self.current_config_index = 3
+        # else:
+        #     self.current_config_index = random.randint(0, len(self.env_configs) - 1)
+
+        start_level = random.randint(0, 99)  # Randomize start level for more variety
         
-        # Create new environment
-        env_option = ENV_OPTION_BASIC
-        if self.episode_num == 1:
-            env_option = ENV_OPTION_WALLS_FRUITS
-        elif self.episode_num == 2:
-            env_option = ENV_OPTION_WALLS_DOORS
-        elif self.episode_num >=3:
-            env_option = random.choice([ENV_OPTION_BASIC, ENV_OPTION_WALLS_FRUITS, ENV_OPTION_WALLS_DOORS])
-        
-        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed, env_option=env_option)
+        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed, config_index=self.current_config_index, start_level=start_level)
         # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
-        print(f"[reset] Created new environment with seed {self.env_seed}, config: {self.current_config_name}")
+        print(f"[reset] Created new environment with start_level={start_level}, config: ({self.current_config_index}) {self.current_config_name}")
         
         # Now safe to call update_agent since self.env exists
         self.update_agent(None, None)
         
         # Old Gym API returns only observation, not (obs, info)
         obs = self.env.reset()
-        
         # Store observation (Procgen returns RGB array directly)
-        print(f"[reset] resetting the episode_obs list")
         self.episode_obs = [obs]
-        
         # Initialize collision tracking for this episode
         self.collision_positions = []  # List of {x, y, type, pixel_x, pixel_y}
-        
-        # Procgen doesn't expose position, track as None
-        self.episode_agent_locations = [(None, None)]
-        
         self.feedback_score = 0
         # self.saved_env = copy.deepcopy(self.env)
         
@@ -617,8 +609,6 @@ class GameControl:
         print(f"[update_agent] CALLED - Starting agent update process")
         print(f"[update_agent] User ID: {self.user_id}")
         print(f"[update_agent] Current agent index: {self.agent_index}")
-        print(f"[update_agent] Current agent path: {self.current_agent_path}")
-        print(f"[update_agent] Data received: {data is not None}")
         print(f"[update_agent] observations stored: {len(self.episode_obs)}")
         
         if self.ppo_agent is None:
@@ -646,10 +636,10 @@ class GameControl:
             return None
                 
         # Remove duplicates
-        # unique_feedback = {}
-        # for feedback in user_feedback:
-        #     unique_feedback[feedback['index']] = feedback
-        # user_feedback = list(unique_feedback.values())
+        unique_feedback = {}
+        for feedback in user_feedback:
+            unique_feedback[feedback['index']] = feedback
+        user_feedback = list(unique_feedback.values())
         self.number_of_feedbacks = len(user_feedback)
         
         print(f"[update_agent] After deduplication: {len(user_feedback)} unique feedback items")
@@ -691,7 +681,6 @@ class GameControl:
                     session.close()
 
         feedback_indexes = [feedback['index'] for feedback in user_feedback]
-        print(f"[update_agent] Feedback indexes: {feedback_indexes}")
 
         optimal_agents = []
         target_models_indexes = self.models_distance[self.agent_index]
@@ -709,7 +698,6 @@ class GameControl:
 
             agent_correctness = 0
             for action_feedback in user_feedback:
-                print(f"[update_agent] feedback index {action_feedback['index']}, action_feedback: {action_feedback}")
                 if action_feedback['index'] >= len(self.episode_obs):
                     print(f"[update_agent] WARNING: Feedback index {action_feedback['index']} out of bounds")
                     continue
@@ -723,7 +711,6 @@ class GameControl:
 
             if agent_correctness > 0:
                 similar_actions = self.count_similar_actions(agent, agent_data, feedback_indexes)
-                print(f"[update_agent] Agent {model_name} similar actions: {similar_actions}")
                 optimal_agents.append({
                     "agent": agent,
                     "name": model_name,
@@ -771,11 +758,6 @@ class GameControl:
         self.agent_index = new_agent_dict["model_index"]
         self.current_agent_path = self.models_paths[self.agent_index]['path']
         
-        print(f"\n[update_agent] UPDATE COMPLETE:")
-        print(f"  Previous agent index: {self.prev_agent_index}")
-        print(f"  Current agent index: {self.agent_index}")
-        print(f"  Agent changed: {self.prev_agent_index != self.agent_index}")
-        
         # Clean up unused agents to free memory
         selected_agent = self.ppo_agent
         for agent in loaded_agents:
@@ -783,7 +765,6 @@ class GameControl:
                 del agent
         import gc
         gc.collect()
-        print(f"[update_agent] Memory cleanup completed")
         print(f"{'='*80}\n")
         
         if self.prev_agent is None:
@@ -809,68 +790,92 @@ class GameControl:
             print(f"  prev_agent exists: {self.prev_agent is not None}")
             return {}
 
-        env_kwargs = {
-            'fruitbot_num_walls': 5,
-            'fruitbot_num_good_min': 10,
-            'fruitbot_num_good_range': 1,
-            'fruitbot_num_bad_min': 10,
-            'fruitbot_num_bad_range': 1,
-            'fruitbot_wall_gap_pct': 50,
-            'fruitbot_door_prob_pct': 0,
-            'food_diversity': 4,
-            "use_discrete_action_wrapper": True, 
-            "use_stay_bonus_wrapper": False
-        }
+        # env_kwargs = {
+        #     'fruitbot_num_walls': 5,
+        #     'fruitbot_num_good_min': 10,
+        #     'fruitbot_num_good_range': 1,
+        #     'fruitbot_num_bad_min': 10,
+        #     'fruitbot_num_bad_range': 1,
+        #     'fruitbot_wall_gap_pct': 50,
+        #     'fruitbot_door_prob_pct': 0,
+        #     'food_diversity': 4,
+        #     "use_discrete_action_wrapper": True, 
+        #     "use_stay_bonus_wrapper": False
+        # }
         if similarity_level == 0:
             print(f"[agents_different_routs] Similarity level 0 selected, returning empty result")
             return {}
-
-        if similarity_level == 1: # same env
+        start_level_options = [0]
+        if similarity_level == 1: # same env and same seed/level
             self.env_seed_demonstration = self.env_seed  # Same seed for demonstration
             config_idx = self.current_config_index
-        elif similarity_level == 2: # random env
-            self.env_seed_demonstration = random.choice(self.env_seed_list)
-            config_idx = random.randint(0, len(self.env_configs) - 1)
-            print(f"[agents_different_routs] Selected random seed={self.env_seed_demonstration}, config_idx={config_idx}")
+        elif similarity_level == 2: # same_config different level
+            # self.env_seed_demonstration = random.choice(self.env_seed_list)
+            config_idx = self.current_config_index
+            print(f"[agents_different_routs] Similarity level 2 - same config={config_idx} different level")
+            print(f"[agents_different_routs] congig list= {self.models_distance[self.prev_agent_index][self.agent_index]['configs']}")
+            start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
+
         else: # contrast - use models_distance to find best differentiating env
-            # Access configs list: configs[i] = [seed1, seed2, seed3] for config index i
-            configs_list = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
-            print(f"[agents_different_routs] Total configs available: {len(configs_list)}")
+            config_idx = self.models_distance[self.prev_agent_index][self.agent_index]['contrast_config']
+            start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
             
-            # Choose a random config index
-            config_idx = random.randint(0, len(configs_list) - 1)
-            
-            # Get best seeds for this config (list of 3 seeds)
-            best_seeds_for_config = configs_list[config_idx]
-            
-            # Choose one of the best seeds randomly
-            if best_seeds_for_config and len(best_seeds_for_config) > 0:
-                self.env_seed_demonstration = random.choice(best_seeds_for_config)
-            else:
-                # Fallback if no seeds available
-                self.env_seed_demonstration = random.choice(self.env_seed_list)
-                print(f"[agents_different_routs] WARNING: No seeds available for config {config_idx}, using random seed")
-            
-            print(f"[agents_different_routs] Selected config_idx={config_idx}, seed={self.env_seed_demonstration}")
-        
+            # else:
+            #     # Choose a random config index
+            #     config_idx = random.randint(0, len(configs_list) - 1)
+                
+            #     # Get best seeds for this config (list of 3 seeds)
+            #     best_seeds_for_config = configs_list[config_idx]
+                
+            #     # Choose one of the best seeds randomly
+            #     if best_seeds_for_config and len(best_seeds_for_config) > 0:
+            #         self.env_seed_demonstration = random.choice(best_seeds_for_config)
+            #     else:
+            #         # Fallback if no seeds available
+            #         self.env_seed_demonstration = random.choice(self.env_seed_list)
+            #         print(f"[agents_different_routs] WARNING: No seeds available for config {config_idx}, using random seed")
+                    
+        start_level = random.choice(start_level_options)
+        print(f"[agents_different_routs] Selected start_level={start_level} from options: {start_level_options}, config index: {config_idx}")
         self.env_seed_used.append(self.env_seed_demonstration)
+                
+        env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=start_level)
+        env2, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=start_level)
 
-        print(f"[agents_different_routs] Initializing env1 and env2 with seed {self.env_seed_demonstration}... similarity_level={similarity_level}")
+        # frames_list_updated, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
+        # frames_list_prev, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
         
-        # Choose a random config for this comparison
+        # img_updated, _ = dpu_clf.draw_full_path(frames_list_updated, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=5, wall_collision_index=wall_collision_index1, use_rectangle=True)
+        # print(f"[agents_different_routs] Path image 1 size: {img_updated.size if img_updated else 'None'}")
         
-        env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx)
-        env2, _, _ = self.create_new_env(self.env_seed_demonstration, config_index=config_idx)
-        print(f"[agents_different_routs] Using config: {config_name} for both agents")
+        # img_prev, _ = dpu_clf.draw_full_path(frames_list_prev, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=5, wall_collision_index=wall_collision_index2, use_rectangle=True)
+        # print(f"[agents_different_routs] Path image 2 size: {img_prev.size if img_prev else 'None'}")
 
-        frames_list_updated, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
-        frames_list_prev, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
-        
-        img_updated, _ = dpu_clf.draw_full_path(frames_list_updated, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=5, wall_collision_index=wall_collision_index1, use_rectangle=True)
-        print(f"[agents_different_routs] Path image 1 size: {img_updated.size if img_updated else 'None'}")
-        
-        img_prev, _ = dpu_clf.draw_full_path(frames_list_prev, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=5, wall_collision_index=wall_collision_index2, use_rectangle=True)
-        print(f"[agents_different_routs] Path image 2 size: {img_prev.size if img_prev else 'None'}")
+        # current/updated agent path
+        frames1, frames_indexes, collect_indexes, wall_collision_index, collisions, door_opens = dpu_clf.record_frames_with_doors(env1, self.ppo_agent, frames_jumps=5)
+        img_updated, _ = dpu_clf.draw_full_path_with_doors(
+            frames_list=frames1,
+            frames_indexes=frames_indexes,
+            collect_indexes=collect_indexes,
+            collisions=collisions,
+            door_opens=door_opens,
+            frames_jumps=2,
+            wall_collision_index=wall_collision_index,
+            use_rectangle=True,
+        )
+        # prev agent path
+        frames2, frames_indexes, collect_indexes, wall_collision_index, collisions, door_opens = dpu_clf.record_frames_with_doors(env2, self.prev_agent, frames_jumps=5)
+        img_prev, _ = dpu_clf.draw_full_path_with_doors(
+            frames_list=frames2,
+            frames_indexes=frames_indexes,
+            collect_indexes=collect_indexes,
+            collisions=collisions,
+            door_opens=door_opens,
+            frames_jumps=2,
+            wall_collision_index=wall_collision_index,
+            use_rectangle=True,
+        )
+
 
         # Close environments to free memory
         env1.close()
@@ -878,7 +883,7 @@ class GameControl:
         del env1, env2
         
         # Clear frame lists to free memory (large numpy arrays)
-        del frames_list_updated, frames_list_prev
+        del frames1, frames2
         import gc
         gc.collect()
 
@@ -887,8 +892,6 @@ class GameControl:
         # Send images at original size without resizing
         image_updated_base64 = image_to_base64(img_updated, resize=None)
         image_prev_base64 = image_to_base64(img_prev, resize=None)
-        print(f"[agents_different_routs] Base64 image 1 length: {len(image_updated_base64)}")
-        print(f"[agents_different_routs] Base64 image 2 length: {len(image_prev_base64)}")
         
         print(f"\n[agents_different_routs] COMPLETE - Returning comparison data")
         print(f"{'='*80}\n")
@@ -948,19 +951,7 @@ user_to_sid: Dict[str, str] = {}  # Reverse mapping for cleanup
 
 # Procgen Fruitbot models configuration
 
-""" 
-    - stupied agent dont alsway avoid walls and randomly takes food
-    - avoid walls and randomly collect food
-    - donot open doors and collect all food
-    - donot open doors and collect only fruits
-    - collect only fruits on the expense of avoiding walls
-    - open doors and collect all foods
-    - open doors and avoid all foods
-    - open doors and collect only fruits
-    
-"""
-
-easy_models_dict = {
+easy_models_dict_old = {
     # Behavior 1: 
     1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
     
@@ -973,7 +964,7 @@ easy_models_dict = {
     # Behavior 4: collect only fruits and open doors
     4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
     
-    # Behavior 5: open doors and collect all foods
+    # Behavior 5: open some doors and collect all foods
     5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
     
     # Behavior 6: open doors and avoid all foods  
@@ -986,9 +977,7 @@ easy_models_dict = {
     8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
 }
 
-
-# for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
-models_distance = {
+models_distance_old = {
     1: {
         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
@@ -1039,10 +1028,61 @@ models_distance = {
     }
     }
 
+easy_models_dict = {
+    # Behavior 1: don't open doors and collect all food
+    1: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 1, 'name': 'no_doors_collect_all'},
 
-hard_models_dict = {
-    0: {'path': "models/fruitbot/20251227-205223_hard/ppo_final.zip", 'name': 'Agent0'}, # collect only fruits do not open doors
+    # Behavior 2: do not open doors and collect only junk
+    2: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 2, 'name': 'no_doors_junk_only'},
+    
+    # Behavior 3: don't open doors and collect only fruits
+    3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
+    
+    # Behavior 4: open doors and avoid all foods  
+    4: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_avoid_food'},
+    
+    # Behavior 5: open doors and collect all food - mostly fruits
+    5: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 5, 'name': 'mostly_fruits_open_doors'}, 
+
+     # Behavior 6: collect only fruits and open doors
+    6: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_fruits_only'},
 }
+
+
+# for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
+models_distance = {
+    1: {
+        2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[6,7,43], [7, 24,34], [3, 27, 32], [ 10, 20, 30]]},
+        3: {'name': 'no_doors_fruits_only', 'contrast_config': 1, 'configs': [[3, 44, 52], [2, 30, 36], [20, 41,98], [1,2,6]]},
+        5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[13, 19, 70], [1, 35, 87], [0, 3, 5], [7, 89, 9]]},
+    },
+    2: {
+        1: {'name': 'no_doors_collect_all', 'contrast_config': 1, 'configs': [[6,7,43], [7, 24,34], [3, 27, 32], [ 10, 20, 30]]},
+        3: {'name': 'no_doors_fruits_only', 'contrast_config': 1, 'configs': [[57, 67, 72], [24, 54, 66], [47, 49, 22], [77, 55, 88]]},
+        4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[80, 36, 90], [3, 42, 55], [2, 10, 24], [49, 53, 42]]},
+    },
+    3: {
+        4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[57,64, 70],  [10, 64, 27], [0, 49, 2], [49, 11, 12]]},
+        5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[44, 3], [6, 33], [12, 17, 63], [94, 97]]},
+        6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[9, 33, 8], [77, 9, 19], [30, 41], [37, 76] ]},
+    },
+    4: {
+        1: {'name': 'no_doors_collect_all', 'contrast_config': 0, 'configs': [[29, 20, 10], [1, 2, 10], [0, 20, 53], [2, 30]]},
+        5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[10, 42, 62], [6, 53, 16], [84, 67], [4, 68, 97]]},
+        6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[12, 13, 42], [2, 7, 8], [59, 60], [50, 65, 56, 75]]},
+    },
+    5: {
+        4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[10, 42, 62], [6, 53, 16], [84, 67], [4, 68, 97]]},
+        2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[74, 80, 39], [13, 54, 80], [87, 97, 3], [7, 94, 58]]},
+        6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[44, 49, 60], [19, 66], [1, 41], [58, 19]]},
+    },
+    6: {
+        1: {'name': 'no_doors_collect_all', 'contrast_config': 3, 'configs': [[6, 13, 97], [37, 49], [2, 5, 41], [37, 40]]},
+        3: {'name': 'no_doors_fruits_only', 'contrast_config': 3, 'configs': [[9, 33], [9, 19], [30, 41], [37, 46 , 76]]},
+        4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[12, 13, 42], [2, 7, 8], [59, 60], [50, 65, 56, 75]]},
+    }
+}
+
 
 # Action mappings for Fruitbot
 actions_dict = {

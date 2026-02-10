@@ -175,12 +175,12 @@ def parse_args():
     p.add_argument("--n-steps", type=int, default=512, help="PPO n_steps")
     p.add_argument("--batch-size", type=int, default=256, help="PPO batch_size")
     p.add_argument("--learning-rate", type=float, default=5e-4, help="PPO learning rate")
-    p.add_argument("--gamma", type=float, default=0.93, help="Discount factor")
+    p.add_argument("--gamma", type=float, default=0.98, help="Discount factor")
     p.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
-    p.add_argument("--clip-range", type=float, default=0.2, help="Policy clip range")
-    p.add_argument("--ent-coef", type=float, default=0.05, help="Entropy coefficient")
+    p.add_argument("--clip-range", type=float, default=0.1, help="Policy clip range")
+    p.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient")
     p.add_argument("--vf-coef", type=float, default=0.37, help="Value function coefficient")
-    p.add_argument("--max-grad-norm", type=float, default=0.6, help="Gradient clipping")
+    p.add_argument("--max-grad-norm", type=float, default=0.4, help="Gradient clipping")
     p.add_argument("--seed", type=int, default=0, help="Random seed")
     p.add_argument("--device", type=str, default="auto", help="PyTorch device: auto/cpu/cuda")
     p.add_argument("--save-freq", type=int, default=200_000, help="Checkpoint save frequency (timesteps)")
@@ -205,7 +205,7 @@ def parse_args():
     p.add_argument("--wandb-run-name", type=str, default=None, help="Weights & Biases run name")
     p.add_argument("--wandb-tags", type=str, nargs="*", default=None, help="Weights & Biases tags")
     # GPU optimization
-    p.add_argument("--n-epochs", type=int, default=15, help="Number of PPO epochs per update")
+    p.add_argument("--n-epochs", type=int, default=10, help="Number of PPO epochs per update")
     return p.parse_args()
 
 
@@ -275,9 +275,9 @@ def main():
         env_kwargs["use_stay_bonus_wrapper"] = True
         env_kwargs["stay_bonus"] = 0.1
         env_kwargs['fruitbot_num_walls'] = 4
-        env_kwargs['fruitbot_num_good_min'] = 5
+        env_kwargs['fruitbot_num_good_min'] = 3
         env_kwargs['fruitbot_num_good_range'] = 0
-        env_kwargs['fruitbot_num_bad_min'] = 5
+        env_kwargs['fruitbot_num_bad_min'] = 3
         env_kwargs['fruitbot_num_bad_range'] = 0
         env_kwargs['fruitbot_wall_gap_pct'] = 40
         env_kwargs['fruitbot_door_prob_pct'] = args.fruitbot_door_prob_pct

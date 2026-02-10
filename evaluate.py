@@ -125,6 +125,7 @@ def evaluate_agent(
                 truncated = False
             else:
                 obs, reward, done, truncated, info = result
+            # print(f"Step action={action}, Step reward={reward:.2f}, Length={steps}")
 
             # Render if requested - extract RGB from info
             if render and has_cv2 and 'rgb' in info:

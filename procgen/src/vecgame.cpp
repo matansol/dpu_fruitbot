@@ -311,6 +311,28 @@ VecGame::VecGame(int _nenvs, VecOptions opts) {
         info_types.push_back(s);
     }
     
+    {
+        struct libenv_tensortype s;
+        strcpy(s.name, "door_open_x");
+        s.scalar_type = LIBENV_SCALAR_TYPE_REAL;
+        s.dtype = LIBENV_DTYPE_FLOAT32;
+        s.ndim = 0;
+        s.low.float32 = -1.0f;
+        s.high.float32 = 1000.0f;
+        info_types.push_back(s);
+    }
+    
+    {
+        struct libenv_tensortype s;
+        strcpy(s.name, "door_open_y");
+        s.scalar_type = LIBENV_SCALAR_TYPE_REAL;
+        s.dtype = LIBENV_DTYPE_FLOAT32;
+        s.ndim = 0;
+        s.low.float32 = -1.0f;
+        s.high.float32 = 1000.0f;
+        info_types.push_back(s);
+    }
+    
     if (render_human) {
         struct libenv_tensortype s;
         strcpy(s.name, "rgb");

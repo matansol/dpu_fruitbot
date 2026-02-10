@@ -131,6 +131,13 @@ class FruitBotGame : public BasicAbstractGame {
                 src->will_erase = true;
                 target->will_erase = true;
 
+                // Grant extra reward for opening the door
+                // this->step_data.reward += 5.0f;
+
+                // Record lock position (where the key hit) - normalized 0-1 coordinates
+                step_data.door_open_x = target->x / main_width;
+                step_data.door_open_y = target->y / main_height;
+
                 // find and erase the corresponding door entity
                 for (auto ent : entities) {
                     if (ent->type == LOCKED_DOOR && fabs(ent->y - target->y) < 1) {

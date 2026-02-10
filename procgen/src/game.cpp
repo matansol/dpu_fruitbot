@@ -168,6 +168,8 @@ void Game::step() {
     step_data.collision_x = -1.0f;
     step_data.collision_y = -1.0f;
     step_data.collision_type = 0;
+    step_data.door_open_x = -1.0f;
+    step_data.door_open_y = -1.0f;
     game_step();
 
     step_data.done = step_data.done || will_force_reset || (cur_time >= timeout);
@@ -206,6 +208,8 @@ void Game::observe() {
     *(float *)(info_bufs[info_name_to_offset.at("collision_x")]) = step_data.collision_x;
     *(float *)(info_bufs[info_name_to_offset.at("collision_y")]) = step_data.collision_y;
     *(int32_t *)(info_bufs[info_name_to_offset.at("collision_type")]) = step_data.collision_type;
+    *(float *)(info_bufs[info_name_to_offset.at("door_open_x")]) = step_data.door_open_x;
+    *(float *)(info_bufs[info_name_to_offset.at("door_open_y")]) = step_data.door_open_y;
 }
 
 void Game::game_init() {
@@ -246,6 +250,8 @@ void Game::serialize(WriteBuffer *b) {
     b->write_float(step_data.collision_x);
     b->write_float(step_data.collision_y);
     b->write_int(step_data.collision_type);
+    b->write_float(step_data.door_open_x);
+    b->write_float(step_data.door_open_y);
 
     b->write_int(action);
     b->write_int(timeout);
@@ -310,6 +316,8 @@ void Game::deserialize(ReadBuffer *b) {
     step_data.collision_x = b->read_float();
     step_data.collision_y = b->read_float();
     step_data.collision_type = b->read_int();
+    step_data.door_open_x = b->read_float();
+    step_data.door_open_y = b->read_float();
 
     action = b->read_int();
     timeout = b->read_int();

@@ -45,6 +45,8 @@ struct StepData {
     float collision_x = -1.0f;  // X-position of last collision (-1 = no collision)
     float collision_y = -1.0f;  // Y-position of last collision
     int collision_type = 0;  // Type of entity collided with (0 = no collision)
+    float door_open_x = -1.0f;  // X-position of opened door (-1 = no door opened)
+    float door_open_y = -1.0f;  // Y-position of opened door (-1 = no door opened)
 };
 
 struct GameOptions {

@@ -25,36 +25,37 @@ BASE_MODEL: Optional[str] = r"models/fruitbot/20260103-073446_easy/ppo_final.zip
 # Training configurations - easily add/remove parameter sets here
 TRAINING_CONFIGS = [
     {
-        "name": "ignore food, open doors",
-        "fruitbot_reward_negative": 0,
-        "fruitbot_reward_positive": 0,
-        "fruitbot_reward_wall_hit": -3,
-        "fruitbot_reward_step": 0.1,
-        "fruitbot_door_prob_pct": 80,
-    },
-    {
         "name": "all food, open doors",
         "fruitbot_reward_negative": 2,
         "fruitbot_reward_positive": 2,
-        "fruitbot_reward_wall_hit": -3,
-        "fruitbot_reward_step": 0,
+        "fruitbot_reward_wall_hit": -1,
+        "fruitbot_reward_step": 0.1,
         "fruitbot_door_prob_pct": 80,
     },
     {
-        "name": "only fruits, open doors",
-        "fruitbot_reward_negative": 2,
-        "fruitbot_reward_positive": -2,
+        "name": "no food, open doors",
+        "fruitbot_reward_negative": -1,
+        "fruitbot_reward_positive": -1,
         "fruitbot_reward_wall_hit": -3,
         "fruitbot_reward_step": 0.1,
         "fruitbot_door_prob_pct": 80,
-    },    
+    },
+    {
+        "name": "all food, open doors, no step penalty",
+        "fruitbot_reward_negative": 1,
+        "fruitbot_reward_positive": 1,
+        "fruitbot_reward_wall_hit": -3,
+        "fruitbot_reward_step": 0.0,
+        "fruitbot_door_prob_pct": 80,
+    },
+  
  ]
 
 # Common training hyperparameters (same for all configs)
 COMMON_PARAMS = {
     "env": "fruitbot",
     "use_source": False,
-    "n_envs": 24,
+    "n_envs": 30,
     "device": "cuda",
     "distribution_mode": "easy",
     "total_steps": 1000000,
