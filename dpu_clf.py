@@ -45,7 +45,7 @@ BASE_ENV_CONFIG = {
     'fruitbot_reward_wall_hit': -3.0,
     'fruitbot_reward_completion': 10.0,
     'fruitbot_reward_step': 0.0,
-    'num_levels': 100,
+    'num_levels': 1,
 }
 
 ENV_OPTION_TO_CONFIG_INDEXES = {

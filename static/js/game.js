@@ -111,6 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let group = getPlayerGroupFromURL();
     let episodeCount = 0;  // Track number of episodes completed
     const MAX_EPISODES = 4;  // End game after 4 episodes
+    let gameStarted = false;  // Track if the game has been started (for reconnection)
 
     // Playback state
     let isPlaying = false;
@@ -515,6 +516,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('[startGame] Player group:', group);
         console.log('[startGame] Emitting start_game event');
         socket.emit('start_game', { playerName: playerName, group: group });
+        gameStarted = true;
         showPage('agentPlay');
         console.log('[startGame] Switched to agentPlay page');
     });
@@ -863,6 +865,13 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('connect', () => {
         console.log('[socket] ===== CONNECTED TO SERVER =====');
         console.log('[socket] Socket ID:', socket.id);
+
+        // If the game was already started, re-register with the server
+        // so the new socket ID gets mapped back to our user session
+        if (gameStarted && playerName) {
+            console.log('[socket] Reconnected — re-registering user:', playerName);
+            socket.emit('register', { playerName: playerName, group: group });
+        }
     });
 
     socket.on('disconnect', () => {

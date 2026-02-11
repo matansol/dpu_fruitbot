@@ -145,7 +145,7 @@ class Users(Base):
     user_id = Column(String(100))
     timestamp = Column(String(30))
     similarity_level = Column(Integer)
-    final_score = Column(Float, default=0.0)  # Default to 0.0 if not set
+    final_score = Column(Float, nullable=True)
 
 
 class FeedbackAction(Base):
@@ -161,7 +161,8 @@ class FeedbackAction(Base):
     episode_index = Column(Integer)
     agent_name = Column(String(100))
     similarity_level = Column(Integer)
-    env_seed = Column(Integer, nullable=True)
+    env_level = Column(Integer, nullable=True)
+    env_config = Column(Integer, nullable=True)
 
 class UserChoice(Base): 
     __tablename__ = "user_choices"
@@ -177,8 +178,9 @@ class UserChoice(Base):
     similarity_level = Column(Integer)
     feedback_score = Column(Float, nullable=True)
     feedback_count = Column(Integer, nullable=True)
-    env_seed_feedback = Column(Integer, nullable=True)
-    env_seed_demonstration = Column(Integer, nullable=True)
+    env_level_feedback = Column(Integer, nullable=True)
+    env_level_demonstration = Column(Integer, nullable=True)
+    env_config_demonstration = Column(Integer, nullable=True)
 
 def clear_database() -> None:
     """Clears the database tables."""
@@ -245,6 +247,8 @@ class GameControl:
         self.current_config_index: int = 0
         self.last_activity: float = time.time()  # Track last activity for cleanup
         self.game_finished: bool = False  # Track if game is finished
+        self.demonstration_level: int = -1  # Track the level used for demonstration (if any)
+        self.demonstration_env_config: int = -1  # Track the env config index used for demonstration (if any)
         
         # Use centralized environment configurations from dpu_clf
         # This ensures consistency with evaluate_comprehensive.py
@@ -362,7 +366,7 @@ class GameControl:
  
  # ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FODD", "WALLS_FRUIT" ,"WALLS_DOORS"]
 
-        config_order = [0, 2, 3, 1, 3]
+        config_order = [0, 1, 3, 1, 3]
         self.current_config_index = config_order[self.episode_num % len(config_order)]
         # if self.episode_num == 1:
         #     self.current_config_index = 1
@@ -373,11 +377,11 @@ class GameControl:
         # else:
         #     self.current_config_index = random.randint(0, len(self.env_configs) - 1)
 
-        start_level = random.randint(0, 99)  # Randomize start level for more variety
+        self.current_level = random.randint(0, 99)  # Randomize start level for more variety
         
-        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed, config_index=self.current_config_index, start_level=start_level)
+        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed, config_index=self.current_config_index, start_level=self.current_level)
         # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
-        print(f"[reset] Created new environment with start_level={start_level}, config: ({self.current_config_index}) {self.current_config_name}")
+        print(f"[reset] Created new environment with start_level={self.current_level}, config: ({self.current_config_index}) {self.current_config_name}")
         
         # Now safe to call update_agent since self.env exists
         self.update_agent(None, None)
@@ -389,6 +393,8 @@ class GameControl:
         # Initialize collision tracking for this episode
         self.collision_positions = []  # List of {x, y, type, pixel_x, pixel_y}
         self.feedback_score = 0
+        self.demonstration_level: int = -1  
+        self.demonstration_env_config: int = -1  
         # self.saved_env = copy.deepcopy(self.env)
         
         self.step_count = 0  # Reset step count
@@ -651,12 +657,12 @@ class GameControl:
                 try:
                     session = SessionLocal()
                     action_index = action_feedback['index']
-                    if action_index >= len(self.episode_obs):
-                        obs_str = "No observation available"
-                    else:
-                        obs = self.episode_obs[action_index]
-                        # For Procgen, obs is already an RGB array
-                        obs_str = json.dumps(obs.tolist() if isinstance(obs, numpy.ndarray) else str(obs))[:1000]
+                    # if action_index >= len(self.episode_obs):
+                    #     obs_str = "No observation available"
+                    # else:
+                    #     obs = self.episode_obs[action_index]
+                    #     # For Procgen, obs is already an RGB array
+                    #     obs_str = json.dumps(obs.tolist() if isinstance(obs, numpy.ndarray) else str(obs))[:1000]
                     
                     agent_action = action_feedback['agent_action']
                     feedback_action = FeedbackAction(
@@ -668,9 +674,10 @@ class GameControl:
                         action_index=action_index,
                         episode_index=self.episode_num,
                         timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                        agent_name=self.models_paths[self.agent_index]['name'],
+                        agent_name=self.agent_index,
                         similarity_level=self.similar_level_env,
-                        env_seed=self.env_seed,
+                        env_level=self.current_level,
+                        env_config=self.current_config_index,
                     )
                     session.add(feedback_action)
                     session.commit()
@@ -790,24 +797,13 @@ class GameControl:
             print(f"  prev_agent exists: {self.prev_agent is not None}")
             return {}
 
-        # env_kwargs = {
-        #     'fruitbot_num_walls': 5,
-        #     'fruitbot_num_good_min': 10,
-        #     'fruitbot_num_good_range': 1,
-        #     'fruitbot_num_bad_min': 10,
-        #     'fruitbot_num_bad_range': 1,
-        #     'fruitbot_wall_gap_pct': 50,
-        #     'fruitbot_door_prob_pct': 0,
-        #     'food_diversity': 4,
-        #     "use_discrete_action_wrapper": True, 
-        #     "use_stay_bonus_wrapper": False
-        # }
         if similarity_level == 0:
             print(f"[agents_different_routs] Similarity level 0 selected, returning empty result")
             return {}
         start_level_options = [0]
         if similarity_level == 1: # same env and same seed/level
             self.env_seed_demonstration = self.env_seed  # Same seed for demonstration
+            start_level_options = [self.current_level]  # Use the same start level as the current environment
             config_idx = self.current_config_index
         elif similarity_level == 2: # same_config different level
             # self.env_seed_demonstration = random.choice(self.env_seed_list)
@@ -819,28 +815,14 @@ class GameControl:
         else: # contrast - use models_distance to find best differentiating env
             config_idx = self.models_distance[self.prev_agent_index][self.agent_index]['contrast_config']
             start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
-            
-            # else:
-            #     # Choose a random config index
-            #     config_idx = random.randint(0, len(configs_list) - 1)
-                
-            #     # Get best seeds for this config (list of 3 seeds)
-            #     best_seeds_for_config = configs_list[config_idx]
-                
-            #     # Choose one of the best seeds randomly
-            #     if best_seeds_for_config and len(best_seeds_for_config) > 0:
-            #         self.env_seed_demonstration = random.choice(best_seeds_for_config)
-            #     else:
-            #         # Fallback if no seeds available
-            #         self.env_seed_demonstration = random.choice(self.env_seed_list)
-            #         print(f"[agents_different_routs] WARNING: No seeds available for config {config_idx}, using random seed")
                     
-        start_level = random.choice(start_level_options)
-        print(f"[agents_different_routs] Selected start_level={start_level} from options: {start_level_options}, config index: {config_idx}")
+        self.demonstration_level = random.choice(start_level_options)
+        self.demonstration_env_config = config_idx
+        print(f"[agents_different_routs] Selected start_level={self.demonstration_level} from options: {start_level_options}, config index: {config_idx}")
         self.env_seed_used.append(self.env_seed_demonstration)
                 
-        env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=start_level)
-        env2, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=start_level)
+        env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=self.demonstration_level)
+        env2, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=self.demonstration_level)
 
         # frames_list_updated, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
         # frames_list_prev, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
@@ -918,8 +900,8 @@ class GameControl:
             session = SessionLocal()
             user_choice_entry = UserChoice(
                 user_id=self.user_id,
-                old_agent_name=self.models_paths[self.prev_agent_index]['name'],
-                new_agent_name=self.models_paths[self.agent_index]['name'],
+                old_agent_name=self.prev_agent_index,
+                new_agent_name=self.agent_index,
                 timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                 demonstration_time=demonstration_time_fmt,
                 episode_index=self.episode_num,
@@ -928,8 +910,9 @@ class GameControl:
                 similarity_level=self.similar_level_env,
                 feedback_score=self.feedback_score,
                 feedback_count=self.number_of_feedbacks,
-                env_seed_feedback=self.env_seed,
-                env_seed_demonstration=self.env_seed_demonstration if self.similar_level_env >= 1 else None,
+                env_level_feedback=self.current_level,
+                env_level_demonstration=self.demonstration_level,
+                env_config_demonstration=self.demonstration_env_config,
             )
             session.add(user_choice_entry)
             session.commit()
@@ -1148,7 +1131,29 @@ async def disconnect(sid: str) -> None:
     if user_id:
         print(f"[disconnect] Client {user_id} disconnected, session preserved for reconnection")
 
-        
+
+@sio.on("register")
+async def register(sid: str, data: Dict[str, Any]) -> None:
+    """
+    Re-map a reconnected client's new SID to their existing GameControl.
+    Called by the client automatically after a Socket.IO reconnection.
+    """
+    user_id = data.get("playerName", "")
+    if not user_id:
+        print(f"[register] No playerName provided, ignoring")
+        return
+
+    sid_to_user[sid] = user_id
+    user_to_sid[user_id] = sid
+
+    if user_id in game_controls:
+        game_controls[user_id].update_activity()
+        print(f"[register] Re-mapped SID {sid} -> user {user_id} (session restored)")
+        await sio.emit("registered", {"status": "ok", "user_id": user_id}, to=sid)
+    else:
+        print(f"[register] User {user_id} has no active game session")
+        await sio.emit("registered", {"status": "no_session", "user_id": user_id}, to=sid)
+
 
 @sio.on("start_game")
 async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable] = None) -> None:
@@ -1163,6 +1168,7 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
             user_id = f"user_{sid[:8]}"
         
         sid_to_user[sid] = user_id
+        user_to_sid[user_id] = sid
         
         if user_id not in game_controls:
             # Safely convert group to int, default to 1 if invalid
@@ -1602,11 +1608,12 @@ async def cleanup_inactive_users():
             traceback.print_exc()
 
 # ---------------------- RUNNING THE APP -------------------------
-if __name__ == "__main__":
-    if save_to_db:
-        # clear_database()
-        create_database()
+# Always create database tables on import (needed for Docker/Azure where __main__ may not run)
+if save_to_db:
+    clear_database()
+    create_database()
 
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         socket_app,
