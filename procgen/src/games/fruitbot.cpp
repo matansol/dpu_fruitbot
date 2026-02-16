@@ -115,11 +115,11 @@ class FruitBotGame : public BasicAbstractGame {
             step_data.reward += options.fruitbot_reward_positive;
             obj->will_erase = true;
         } else if (obj->type == PRESENT) {
-            if (!step_data.done) {
+            if (!step_data.level_complete) {
+                step_data.reward += options.fruitbot_reward_completion;
+                step_data.done = true;
+                step_data.level_complete = true;
             }
-            step_data.reward += options.fruitbot_reward_completion;
-            step_data.done = true;
-            step_data.level_complete = true;
         }
     }
 

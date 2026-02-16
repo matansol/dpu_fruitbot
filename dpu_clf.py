@@ -31,7 +31,7 @@ collision_object_types = [3, 4]
 
 # These configs are used by both app.py and evaluate_comprehensive.py
 
-ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FODD", "WALLS_FRUIT" ,"WALLS_DOORS"]
+ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FOOD", "WALLS_FRUIT" ,"WALLS_DOORS"]
 
 
 # Base environment configuration defaults
@@ -50,7 +50,7 @@ BASE_ENV_CONFIG = {
 
 ENV_OPTION_TO_CONFIG_INDEXES = {
     "NO_WALLS": [0],
-    "WALLS_FODD": [1],
+    "WALLS_FOOD": [1],
     "WALLS_FRUIT": [2],
     "WALLS_DOORS": [3],
 }

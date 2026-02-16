@@ -13,6 +13,9 @@ import random
 import sys
 from PIL import Image
 
+# Initialize random seed with current time to ensure true randomness
+random.seed()
+
 # Add procgen imports
 import gym
 import procgen
@@ -368,14 +371,6 @@ class GameControl:
 
         config_order = [0, 1, 3, 1, 3]
         self.current_config_index = config_order[self.episode_num % len(config_order)]
-        # if self.episode_num == 1:
-        #     self.current_config_index = 1
-        # elif self.episode_num == 2:
-        #     self.current_config_index = 2
-        # elif self.episode_num == 3:
-        #     self.current_config_index = 3
-        # else:
-        #     self.current_config_index = random.randint(0, len(self.env_configs) - 1)
 
         self.current_level = random.randint(0, 99)  # Randomize start level for more variety
         
@@ -800,7 +795,7 @@ class GameControl:
         if similarity_level == 0:
             print(f"[agents_different_routs] Similarity level 0 selected, returning empty result")
             return {}
-        start_level_options = [0]
+        start_level_options = []
         if similarity_level == 1: # same env and same seed/level
             self.env_seed_demonstration = self.env_seed  # Same seed for demonstration
             start_level_options = [self.current_level]  # Use the same start level as the current environment
@@ -812,10 +807,17 @@ class GameControl:
             print(f"[agents_different_routs] congig list= {self.models_distance[self.prev_agent_index][self.agent_index]['configs']}")
             start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
 
-        else: # contrast - use models_distance to find best differentiating env
+        elif similarity_level == 3: # contrast - use models_distance to find best differentiating env
             config_idx = self.models_distance[self.prev_agent_index][self.agent_index]['contrast_config']
             start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
-                    
+
+        else: # random config and level
+            # Use current time nanoseconds to ensure truly random selection each time
+            import time
+            random.seed(time.time_ns())
+            config_idx = random.randint(0, len(self.env_configs) - 1)
+            start_level_options = list(range(100))  # Any level for random config
+
         self.demonstration_level = random.choice(start_level_options)
         self.demonstration_env_config = config_idx
         print(f"[agents_different_routs] Selected start_level={self.demonstration_level} from options: {start_level_options}, config index: {config_idx}")
@@ -1610,7 +1612,7 @@ async def cleanup_inactive_users():
 # ---------------------- RUNNING THE APP -------------------------
 # Always create database tables on import (needed for Docker/Azure where __main__ may not run)
 if save_to_db:
-    clear_database()
+    # clear_database()
     create_database()
 
 if __name__ == "__main__":

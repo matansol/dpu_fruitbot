@@ -134,7 +134,7 @@ def main():
                         help="Configuration index (0=no_walls, 1=walls_food, 2=walls_fruits, 3=walls_doors)")
     parser.add_argument("--rand-seed", type=int, default=0,
                         help="Random seed")
-    parser.add_argument("--output", type=str, default="results/simple_eval.csv",
+    parser.add_argument("--output", type=str, default="results/simple_eval2.csv",
                         help="Output CSV file path")
     
     args = parser.parse_args()
