@@ -934,6 +934,25 @@ game_controls: Dict[str, GameControl] = {}
 sid_to_user: Dict[str, str] = {}
 user_to_sid: Dict[str, str] = {}  # Reverse mapping for cleanup
 
+# Per-user asyncio locks to prevent concurrent event processing for the same user.
+# This prevents race conditions when multiple socket events fire rapidly
+# (e.g., agent_select + next_episode fired back-to-back).
+_user_locks: Dict[str, asyncio.Lock] = {}
+
+def _get_user_lock(user_id: str) -> asyncio.Lock:
+    """Get or create an asyncio lock for a specific user."""
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    return _user_locks[user_id]
+
+def _lookup_user(sid: str) -> Tuple[str, Optional['GameControl']]:
+    """Safely look up user_id and GameControl from a socket SID.
+    Returns (user_id, game_control) or ('', None) if not found."""
+    user_id = sid_to_user.get(sid, '')
+    if not user_id or user_id not in game_controls:
+        return user_id or '', None
+    return user_id, game_controls[user_id]
+
 # Procgen Fruitbot models configuration
 
 easy_models_dict_old = {
@@ -1114,24 +1133,21 @@ async def connect(sid: str, environ: Dict[str, Any]) -> None:
 
 @sio.event
 async def disconnect(sid: str) -> None:
-    print(f"Client disconnected: {sid}")
-    
-    # Get user_id before removing mapping
     user_id = sid_to_user.get(sid)
+    print(f"Client disconnected: {sid} (user={user_id})")
     
-    # Remove sid mapping (but KEEP GameControl for reconnection)
-    if sid in sid_to_user:
-        del sid_to_user[sid]
-    
-    if user_id and user_id in user_to_sid:
-        del user_to_sid[user_id]
-    
-    # Do NOT remove GameControl - client may reconnect between episodes
-    # Cleanup will happen via:
-    # 1. finish_game event (explicit end)
-    # 2. Background task (20 min inactivity)
+    # IMPORTANT: Do NOT remove sid_to_user or user_to_sid mappings here.
+    # Azure load balancers and network hiccups cause brief WebSocket drops.
+    # The client auto-reconnects and fires 'register' to re-map its new SID.
+    # If we delete mappings here, any in-flight events between disconnect
+    # and reconnect will fail with 'user not found'.
+    #
+    # Stale SID mappings are cleaned up by:
+    # 1. 'register' event (overwrites old SID with new one)
+    # 2. Background cleanup task (removes inactive users after 20 min)
+    # 3. Game completion (next_episode removes everything)
     if user_id:
-        print(f"[disconnect] Client {user_id} disconnected, session preserved for reconnection")
+        print(f"[disconnect] Client {user_id} disconnected, session + mappings preserved for reconnection")
 
 
 @sio.on("register")
@@ -1144,6 +1160,12 @@ async def register(sid: str, data: Dict[str, Any]) -> None:
     if not user_id:
         print(f"[register] No playerName provided, ignoring")
         return
+
+    # Clean up stale SID mapping for this user (from previous connection)
+    old_sid = user_to_sid.get(user_id)
+    if old_sid and old_sid != sid and old_sid in sid_to_user:
+        del sid_to_user[old_sid]
+        print(f"[register] Cleaned stale SID mapping: {old_sid} for user {user_id}")
 
     sid_to_user[sid] = user_id
     user_to_sid[user_id] = sid
@@ -1168,6 +1190,12 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
         
         if not user_id:
             user_id = f"user_{sid[:8]}"
+        
+        # Clean up stale SID mapping for this user (from previous connection)
+        old_sid = user_to_sid.get(user_id)
+        if old_sid and old_sid != sid and old_sid in sid_to_user:
+            del sid_to_user[old_sid]
+            print(f"[start_game] Cleaned stale SID mapping: {old_sid} for user {user_id}")
         
         sid_to_user[sid] = user_id
         user_to_sid[user_id] = sid
@@ -1251,78 +1279,80 @@ async def handle_send_action(sid: str, action: str) -> Dict[str, str]:
     """
     Handle a user action. Look up the GameControl instance using the sid mapping.
     """
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
-        
-    user_game = game_controls[user_id]
-    user_game.update_activity()  # Track activity
-    response = user_game.handle_action(action)
-    response["action"] = action_dir.get(action, "Unknown")
 
-    # if save_to_db:
-    #     session = SessionLocal()
-    #     try:
-    #         obs_str = json.dumps(user_game.current_obs.tolist() if isinstance(user_game.current_obs, numpy.ndarray) else str(user_game.current_obs))[:1000]
-    #         new_action = Action(
-    #             action_type=str(action),
-    #             agent_action=response["agent_action"],
-    #             score=response["score"],
-    #             reward=response["reward"],
-    #             done=response["done"],
-    #             user_id=user_game.user_id,
-    #             timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-    #             episode=response["episode"],
-    #             env_state=obs_str
-    #         )
-    #         session.add(new_action)
-    #         session.commit()
-    #     except Exception as e:
-    #         session.rollback()
-    #         print(f"Database operation failed: {e}")
-    #     finally:
-    #         session.close()
+    async with _get_user_lock(user_id):
+        if user_id not in game_controls:
+            await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+            return
+        user_game = game_controls[user_id]
+        user_game.update_activity()
+        response = user_game.handle_action(action)
+        response["action"] = action_dir.get(action, "Unknown")
 
-    await finish_turn(response, user_game, sid, need_feedback_data=False)
+    await sio.emit("game_update", response, to=sid)
     return {"status": "success"}
 
 @sio.on("next_episode")
 async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
     # Accept optional data to match Socket.IO which may pass a payload (even if empty)
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
+        print(f"[next_episode] User not found for SID {sid}, ignoring")
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
-    user_game = game_controls[user_id]
-    
-    # Cleanup previous agent to save memory after each episode
-    user_game.cleanup_agents()
-    
-    # Check if 5 episodes have been completed
-    if user_game.episode_num >= 5:
-        print(f"[next_episode] User {user_id} has completed 5 episodes, ending game")
-        print(f"[next_episode] Final agent index: {user_game.agent_index}")
-        
-        # Mark game as finished and cleanup
-        user_game.game_finished = True
-        user_game.cleanup_all()
-        
-        await sio.emit("game_finished", {
-            "total_episodes": user_game.episode_num,
-            "final_agent_index": user_game.agent_index
-        }, to=sid)
-        
-        # Remove GameControl after notifying client
-        if user_id in game_controls:
-            del game_controls[user_id]
-        if user_id in user_to_sid:
-            del user_to_sid[user_id]
-        
-        print(f"[next_episode] Cleaned up resources for completed game: {user_id}")
-        return
-    
-    response = user_game.get_initial_observation()
+
+    async with _get_user_lock(user_id):
+        # Re-check after acquiring lock (another event may have deleted the session)
+        if user_id not in game_controls:
+            print(f"[next_episode] User {user_id} session gone after lock acquisition")
+            await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+            return
+        user_game = game_controls[user_id]
+        user_game.update_activity()
+
+        # Skip if game already marked as finished (duplicate event protection)
+        if user_game.game_finished:
+            print(f"[next_episode] User {user_id} game already finished, ignoring duplicate")
+            return
+
+        # Cleanup previous agent to save memory after each episode
+        user_game.cleanup_agents()
+
+        # Check if 5 episodes have been completed
+        if user_game.episode_num >= 5:
+            print(f"[next_episode] User {user_id} has completed 5 episodes, ending game")
+            print(f"[next_episode] Final agent index: {user_game.agent_index}")
+
+            # Mark as finished FIRST to prevent any concurrent events from proceeding
+            user_game.game_finished = True
+            final_episode_num = user_game.episode_num
+            final_agent_index = user_game.agent_index
+
+            # Emit BEFORE cleanup so the data is still valid
+            await sio.emit("game_finished", {
+                "total_episodes": final_episode_num,
+                "final_agent_index": final_agent_index
+            }, to=sid)
+
+            # Now safe to cleanup and remove
+            user_game.cleanup_all()
+            game_controls.pop(user_id, None)
+            # Clean up SID mappings
+            old_sid = user_to_sid.pop(user_id, None)
+            if old_sid and old_sid in sid_to_user:
+                sid_to_user.pop(old_sid, None)
+            # Clean up lock
+            _user_locks.pop(user_id, None)
+
+            print(f"[next_episode] Cleaned up resources for completed game: {user_id}")
+            return
+
+        response = user_game.get_initial_observation()
+
     await sio.emit("game_update", response, to=sid)
 
 # @sio.on("ppo_action")
@@ -1339,12 +1369,12 @@ async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
 @sio.on("play_entire_episode")
 async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
     """Run the agent for a complete episode and stream frames in batches."""
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
     
-    user_game = game_controls[user_id]
+    user_game.update_activity()
 
     print(f"[play_entire_episode] Starting the episode: framses={len(user_game.episode_frames)}, actions={len(user_game.episode_actions)}")
     
@@ -1442,45 +1472,61 @@ async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playe
     print(f"[compare_agents] User feedback count: {len(data.get('userFeedback', []))}")
     print(f"{'='*80}\n")
     
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
         print(f"[compare_agents] ERROR: User not found - SID: {sid}, User ID: {user_id}")
-        await sio.emit("error", {"error": "User not found"}, to=sid)
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
     
-    user_game = game_controls[user_id]
-    print(f"[compare_agents] User game found for: {user_id}")
+    async with _get_user_lock(user_id):
+        # Re-check after acquiring lock
+        if user_id not in game_controls:
+            await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+            return
+        user_game = game_controls[user_id]
+        user_game.update_activity()
     
-    print(f"[compare_agents] Calling update_agent...")
-    res = user_game.update_agent(data, sid)
+        if user_game.game_finished:
+            print(f"[compare_agents] User {user_id} game already finished, ignoring")
+            return
+
+        print(f"[compare_agents] User game found for: {user_id}")
     
-    if res is None:
-        print(f"[compare_agents] update_agent returned None, starting next episode")
-        await next_episode(sid)
-        return
+        print(f"[compare_agents] Calling update_agent...")
+        res = user_game.update_agent(data, sid)
+    
+        if res is None:
+            print(f"[compare_agents] update_agent returned None (no feedback), notifying client")
+            # Don't call next_episode directly - let the client handle the flow
+            await sio.emit("compare_agents", {
+                "similarity_level": -1,
+                "agent_updated": False,
+                "message": "No agent update needed"
+            }, to=sid)
+            return
         
-    if user_game.similar_level_env == 0:
-        current_path = user_game.current_agent_path
-        print(f"[compare_agents] Similarity level is 0 - no visual comparison needed")
-        print(f"  Current agent path: {current_path}")
-        print(f"  Agent index: {user_game.agent_index}")
-        await sio.emit("update_agent_group", {'agent_group': user_game.agent_index}, to=sid)
-        if save_to_db:
-            user_game.save_user_choice(True, '', datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"))
-        print(f"[compare_agents] Update complete for user {user_id}")
+        if user_game.similar_level_env == 0:
+            current_path = user_game.current_agent_path
+            print(f"[compare_agents] Similarity level is 0 - no visual comparison needed")
+            print(f"  Current agent path: {current_path}")
+            print(f"  Agent index: {user_game.agent_index}")
+            await sio.emit("update_agent_group", {'agent_group': user_game.agent_index}, to=sid)
+            if save_to_db:
+                user_game.save_user_choice(True, '', datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"))
+            print(f"[compare_agents] Update complete for user {user_id}")
         
-        # For similarity level 0, send confirmation response instead of starting next episode
-        print(f"[compare_agents] Emitting agent_updated_no_comparison response to client...")
-        await sio.emit("compare_agents", {
-            "similarity_level": 0,
-            "agent_updated": True,
-            "message": "Agent updated successfully"
-        }, to=sid)
-        print(f"[compare_agents] Response sent successfully")
-        return
+            # For similarity level 0, send confirmation response instead of starting next episode
+            print(f"[compare_agents] Emitting agent_updated_no_comparison response to client...")
+            await sio.emit("compare_agents", {
+                "similarity_level": 0,
+                "agent_updated": True,
+                "message": "Agent updated successfully"
+            }, to=sid)
+            print(f"[compare_agents] Response sent successfully")
+            return
     
-    print(f"[compare_agents] Calling agents_different_routs...")
-    res = user_game.agents_different_routs(user_game.similar_level_env)
+        print(f"[compare_agents] Calling agents_different_routs...")
+        res = user_game.agents_different_routs(user_game.similar_level_env)
     
     if res and 'rawImageUpdated' in res and 'rawImagePrev' in res:
         print(f"[compare_agents] Successfully generated comparison images")
@@ -1522,10 +1568,12 @@ async def start_cover_page(sid: str) -> None:
     """
     Handle the transition from the cover page to the welcome page.
     """
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
+
+    user_game.update_activity()
 
     # Call the start_game function in the background
     await start_game(sid, {"playerName": user_id})
@@ -1535,32 +1583,42 @@ async def start_cover_page(sid: str) -> None:
 
 @sio.on("agent_select")
 async def agent_select(sid: str, data: Dict[str, Any]) -> None:
-    user_id = sid_to_user.get(sid)
-    if not user_id or user_id not in game_controls:
-        await sio.emit("error", {"error": "User not found"}, to=sid)
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
 
-    user_game = game_controls[user_id]
+    async with _get_user_lock(user_id):
+        # Re-check after acquiring lock
+        if user_id not in game_controls:
+            await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+            return
+        user_game = game_controls[user_id]
+        user_game.update_activity()
 
-    demonstration_time_str = data.get('demonstration_time', None)
-    if demonstration_time_str:
-        try:
-            dt = datetime.fromisoformat(demonstration_time_str.replace('Z', '+00:00'))
-            demonstration_time_fmt = dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception as e:
-            print(f"Failed to parse demonstration_time: {demonstration_time_str}, error: {e}")
-            demonstration_time_fmt = demonstration_time_str
-    else:
-        demonstration_time_fmt = datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        if user_game.game_finished:
+            print(f"[agent_select] User {user_id} game already finished, ignoring")
+            return
 
-    if save_to_db:
-        user_game.save_user_choice(data['use_updated'], data.get('choiceExplanation', ''), demonstration_time_fmt)
+        demonstration_time_str = data.get('demonstration_time', None)
+        if demonstration_time_str:
+            try:
+                dt = datetime.fromisoformat(demonstration_time_str.replace('Z', '+00:00'))
+                demonstration_time_fmt = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                print(f"Failed to parse demonstration_time: {demonstration_time_str}, error: {e}")
+                demonstration_time_fmt = demonstration_time_str
+        else:
+            demonstration_time_fmt = datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+        if save_to_db:
+            user_game.save_user_choice(data['use_updated'], data.get('choiceExplanation', ''), demonstration_time_fmt)
         
-    if data['use_updated'] == False:
-        user_game.revert_to_old_agent()
-        print(f"User {user_id} switched to the old agent.")
-    else:
-        print(f"User {user_id} keep with the new agent.")
+        if data['use_updated'] == False:
+            user_game.revert_to_old_agent()
+            print(f"User {user_id} switched to the old agent.")
+        else:
+            print(f"User {user_id} keep with the new agent.")
     
     await sio.emit("agent_selection_result", {'agent_group': user_game.agent_index}, to=sid)
 
@@ -1589,15 +1647,17 @@ async def cleanup_inactive_users():
                 if user_id in game_controls:
                     print(f"[cleanup_inactive_users] Removing inactive user {user_id}")
                     game_control = game_controls[user_id]
+                    game_control.game_finished = True  # Mark finished first
                     game_control.cleanup_all()
-                    del game_controls[user_id]
+                    game_controls.pop(user_id, None)
                     
                     # Clean up mappings
-                    if user_id in user_to_sid:
-                        sid = user_to_sid[user_id]
-                        if sid in sid_to_user:
-                            del sid_to_user[sid]
-                        del user_to_sid[user_id]
+                    old_sid = user_to_sid.pop(user_id, None)
+                    if old_sid:
+                        sid_to_user.pop(old_sid, None)
+                    
+                    # Clean up lock
+                    _user_locks.pop(user_id, None)
                     
                     print(f"[cleanup_inactive_users] Cleaned up user {user_id}")
             

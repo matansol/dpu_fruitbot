@@ -33,7 +33,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY procgen/ ./procgen/
 COPY setup.py .
 COPY README.md .
-# Install in non-editable mode to trigger C++ build
+# Install procgen from source (triggers C++ build)
+# setup.py install runs in the main venv where gym3 is already installed from requirements.txt.
 RUN python setup.py install
 
 # Copy application files
@@ -58,4 +59,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # Command to run your application with Gunicorn & Uvicorn
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "app:socket_app"]
+# --timeout 300: compare_agents runs heavy model inference + image generation (can take >120s)
+# --graceful-timeout 30: give WebSocket connections time to close on Azure restart/redeploy
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "300", "--graceful-timeout", "30", "--keep-alive", "65", "app:socket_app"]

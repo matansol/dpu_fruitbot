@@ -629,28 +629,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     buttons.usePrevious.addEventListener('click', () => {
         console.log('Use previous agent');
+        buttons.usePrevious.disabled = true;
+        buttons.useUpdated.disabled = true;
         socket.emit('agent_select', {
             playerName: playerName,
             use_updated: false
         });
-        episodeCount++;
-        console.log(`[usePrevious] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
-        socket.emit('next_episode', { playerName: playerName });
-        showPage('agentPlay');
-        resetAgentPlayPage();
+        // next_episode is fired from the agent_selection_result handler below
     });
 
     buttons.useUpdated.addEventListener('click', () => {
         console.log('Use updated agent');
+        buttons.usePrevious.disabled = true;
+        buttons.useUpdated.disabled = true;
         socket.emit('agent_select', {
             playerName: playerName,
             use_updated: true
         });
-        episodeCount++;
-        console.log(`[useUpdated] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
-        socket.emit('next_episode', { playerName: playerName });
-        showPage('agentPlay');
-        resetAgentPlayPage();
+        // next_episode is fired from the agent_selection_result handler below
     });
 
     // Button handler for similarity level 0 - continue to next episode after agent update
@@ -881,6 +877,13 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('error', (data) => {
         console.error('[socket] ===== ERROR FROM SERVER =====');
         console.error('[socket] Error data:', data);
+        hideLoading();
+        if (data.code === 'SESSION_EXPIRED') {
+            console.warn('[socket] Session expired, redirecting to start');
+            alert('Your session has expired. The page will reload.');
+            window.location.reload();
+            return;
+        }
         alert(`Server error: ${data.message || data.error || 'Unknown error'}`);
     });
 
@@ -899,6 +902,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Hide loading screen
         hideLoading();
+
+        // Handle no-feedback / no-update case - go directly to next episode
+        if (data.similarity_level === -1) {
+            console.log('[compare_agents] No agent update needed, proceeding to next episode');
+            episodeCount++;
+            socket.emit('next_episode', { playerName: playerName });
+            showPage('agentPlay');
+            resetAgentPlayPage();
+            return;
+        }
 
         // Check if this is a similarity level 0 response (no comparison)
         if (data.similarity_level === 0 && data.agent_updated) {
@@ -967,6 +980,19 @@ document.addEventListener('DOMContentLoaded', () => {
         hideLoading();
         showPage('finish');
         console.log('[game_finished] Switched to finish page');
+    });
+
+    // Handle agent selection confirmation - NOW safe to proceed to next episode
+    socket.on('agent_selection_result', (data) => {
+        console.log('[agent_selection_result] Agent selection confirmed, agent_group:', data.agent_group);
+        episodeCount++;
+        console.log(`[agent_selection_result] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
+        socket.emit('next_episode', { playerName: playerName });
+        showPage('agentPlay');
+        resetAgentPlayPage();
+        // Re-enable buttons for next round
+        if (buttons.usePrevious) buttons.usePrevious.disabled = false;
+        if (buttons.useUpdated) buttons.useUpdated.disabled = false;
     });
 
     // Initialize

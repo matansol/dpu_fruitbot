@@ -1182,8 +1182,8 @@ def compare_models(env1, env2, model1: PPO, model2: PPO, save_to_file: bool = Fa
         out_path1 = ''
         out_path2 = ''
 
-    model1_path_image, _ = draw_full_path(frames_list=frames_list1, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index1, use_rectangle=True)
-    model2_path_image, _ = draw_full_path(frames_list=frames_list2, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index2, use_rectangle=True)
+    model1_path_image, _ = draw_full_path_with_doors(frames_list=frames_list1, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index1, use_rectangle=True, door_opens=door_opens1)
+    model2_path_image, _ = draw_full_path_with_doors(frames_list=frames_list2, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=frames_jumps, wall_collision_index=wall_collision_index2, use_rectangle=True, door_opens=door_opens2)
     
     return model1_path_image, model2_path_image
 
