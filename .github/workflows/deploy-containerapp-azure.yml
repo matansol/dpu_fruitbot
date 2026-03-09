@@ -58,51 +58,52 @@ jobs:
             exit 1
           fi
 
-      - name: Detect Container App
-        id: detect
+      - name: Upsert Container App
         shell: bash
         run: |
-          if az containerapp show --name "$AZURE_CONTAINERAPP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Update Container App
-        if: steps.detect.outputs.exists == 'true'
-        run: |
-          az containerapp update \
-            --name "$AZURE_CONTAINERAPP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --image "${{ steps.image.outputs.value }}"
-
-      - name: Create Container App (if missing)
-        if: steps.detect.outputs.exists == 'false'
-        shell: bash
-        run: |
-          if [ -z "$AZURE_CONTAINERAPP_ENVIRONMENT" ]; then
-            echo "Container App does not exist and AZURE_CONTAINERAPP_ENVIRONMENT is not set."
-            echo "Set repo variable AZURE_CONTAINERAPP_ENVIRONMENT (existing Container Apps environment name)."
-            exit 1
-          fi
-
           TARGET_PORT="${AZURE_TARGET_PORT:-8000}"
           INGRESS="${AZURE_INGRESS:-external}"
 
-          CREATE_ARGS=(
-            --name "$AZURE_CONTAINERAPP_NAME"
-            --resource-group "$AZURE_RESOURCE_GROUP"
-            --environment "$AZURE_CONTAINERAPP_ENVIRONMENT"
-            --image "${{ steps.image.outputs.value }}"
-            --target-port "$TARGET_PORT"
-            --ingress "$INGRESS"
-          )
+          set +e
+          UPDATE_OUTPUT=$(az containerapp update \
+            --name "$AZURE_CONTAINERAPP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --image "${{ steps.image.outputs.value }}" 2>&1)
+          UPDATE_EXIT=$?
+          set -e
 
-          if [ -n "$AZURE_LOCATION" ]; then
-            CREATE_ARGS+=(--location "$AZURE_LOCATION")
+          if [ $UPDATE_EXIT -eq 0 ]; then
+            echo "Container App updated successfully."
+            exit 0
           fi
 
-          az containerapp create "${CREATE_ARGS[@]}"
+          echo "$UPDATE_OUTPUT"
+
+          if echo "$UPDATE_OUTPUT" | grep -qi "does not exist"; then
+            if [ -z "$AZURE_CONTAINERAPP_ENVIRONMENT" ]; then
+              echo "Container App does not exist and AZURE_CONTAINERAPP_ENVIRONMENT is not set."
+              echo "Set repo variable AZURE_CONTAINERAPP_ENVIRONMENT (existing Container Apps environment name)."
+              exit 1
+            fi
+
+            CREATE_ARGS=(
+              --name "$AZURE_CONTAINERAPP_NAME"
+              --resource-group "$AZURE_RESOURCE_GROUP"
+              --environment "$AZURE_CONTAINERAPP_ENVIRONMENT"
+              --image "${{ steps.image.outputs.value }}"
+              --target-port "$TARGET_PORT"
+              --ingress "$INGRESS"
+            )
+
+            if [ -n "$AZURE_LOCATION" ]; then
+              CREATE_ARGS+=(--location "$AZURE_LOCATION")
+            fi
+
+            az containerapp create "${CREATE_ARGS[@]}"
+          else
+            echo "Update failed for a reason other than missing app."
+            exit $UPDATE_EXIT
+          fi
 
       - name: Show latest revision
         run: |
