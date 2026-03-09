@@ -112,6 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let episodeCount = 0;  // Track number of episodes completed
     const MAX_EPISODES = 4;  // End game after 4 episodes
     let gameStarted = false;  // Track if the game has been started (for reconnection)
+    let demonstrationStartTime = null;  // Track when comparison demonstration is shown
 
     // Playback state
     let isPlaying = false;
@@ -627,36 +628,93 @@ document.addEventListener('DOMContentLoaded', () => {
         resetAgentPlayPage();
     });
 
+    // --- RATING POPUP LOGIC ---
+    let pendingAgentSelection = null; // Stores {use_updated: bool} until rating is submitted
+    const ratingOverlay = document.getElementById('rating-overlay');
+    const ratingButtons = document.querySelectorAll('.rating-btn');
+
+    function showRatingPopup(useUpdated) {
+        pendingAgentSelection = { use_updated: useUpdated };
+        // Reset all button styles
+        ratingButtons.forEach(btn => {
+            btn.style.background = '#f9f9f9';
+            btn.style.borderColor = '#ccc';
+            btn.style.color = '#333';
+        });
+        ratingOverlay.style.display = 'flex';
+    }
+
+    ratingButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const rating = parseInt(btn.dataset.rating);
+            console.log('[rating] User rated agent:', rating);
+
+            // Highlight selected button
+            ratingButtons.forEach(b => {
+                b.style.background = '#f9f9f9';
+                b.style.borderColor = '#ccc';
+                b.style.color = '#333';
+            });
+            btn.style.background = '#2E86AB';
+            btn.style.borderColor = '#2E86AB';
+            btn.style.color = '#fff';
+
+            // Short delay so user sees their selection, then emit
+            setTimeout(() => {
+                ratingOverlay.style.display = 'none';
+                if (pendingAgentSelection) {
+                    if (pendingAgentSelection.similarity_level_0) {
+                        // For similarity_level=0, send rating with agent update confirmation
+                        console.log('[rating] Submitting rating for similarity_level=0:', rating);
+                        socket.emit('agent_update_rating', {
+                            playerName: playerName,
+                            agent_rating: rating,
+                            demonstration_time: demonstrationStartTime
+                        });
+                    } else {
+                        // Normal agent selection with rating
+                        socket.emit('agent_select', {
+                            playerName: playerName,
+                            use_updated: pendingAgentSelection.use_updated,
+                            demonstration_time: demonstrationStartTime,
+                            agent_rating: rating
+                        });
+                    }
+                    pendingAgentSelection = null;
+                }
+            }, 250);
+        });
+    });
+
     buttons.usePrevious.addEventListener('click', () => {
         console.log('Use previous agent');
         buttons.usePrevious.disabled = true;
         buttons.useUpdated.disabled = true;
-        socket.emit('agent_select', {
-            playerName: playerName,
-            use_updated: false
-        });
-        // next_episode is fired from the agent_selection_result handler below
+        showRatingPopup(false);
+        // agent_select is now emitted after rating is submitted
     });
 
     buttons.useUpdated.addEventListener('click', () => {
         console.log('Use updated agent');
         buttons.usePrevious.disabled = true;
         buttons.useUpdated.disabled = true;
-        socket.emit('agent_select', {
-            playerName: playerName,
-            use_updated: true
-        });
-        // next_episode is fired from the agent_selection_result handler below
+        showRatingPopup(true);
+        // agent_select is now emitted after rating is submitted
     });
 
-    // Button handler for similarity level 0 - continue to next episode after agent update
+    // Button handler for similarity level 0 - show rating popup before continuing
     buttons.continueNextEpisode.addEventListener('click', () => {
-        console.log('[continueNextEpisode] Continuing to next episode after agent update (similarity level 0)');
-        episodeCount++;
-        console.log(`[continueNextEpisode] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
-        socket.emit('next_episode', { playerName: playerName });
-        showPage('agentPlay');
-        resetAgentPlayPage();
+        console.log('[continueNextEpisode] Showing rating popup for similarity level 0');
+        // Set a flag to indicate this is a similarity_level=0 rating
+        pendingAgentSelection = { similarity_level_0: true };
+        
+        // Reset all button styles
+        ratingButtons.forEach(btn => {
+            btn.style.background = '#f9f9f9';
+            btn.style.borderColor = '#ccc';
+            btn.style.color = '#333';
+        });
+        ratingOverlay.style.display = 'flex';
     });
 
     function resetAgentPlayPage() {
@@ -945,16 +1003,20 @@ document.addEventListener('DOMContentLoaded', () => {
             updatedAgentImage.src = img1.src;
             previousAgentImage.src = img2.src;
 
-            // Scroll to bottom of images once they load
-            updatedAgentImage.onload = function() {
-                const container = this.parentElement;
-                container.scrollTop = container.scrollHeight;
-            };
-            previousAgentImage.onload = function() {
-                const container = this.parentElement;
-                container.scrollTop = container.scrollHeight;
-            };
+            // // Scroll to bottom of images once they load
+            // updatedAgentImage.onload = function() {
+            //     const container = this.parentElement;
+            //     container.scrollTop = container.scrollHeight;
+            // };
+            // previousAgentImage.onload = function() {
+            //     const container = this.parentElement;
+            //     container.scrollTop = container.scrollHeight;
+            // };
 
+            // Capture timestamp BEFORE showing the page to the user
+            demonstrationStartTime = new Date().toISOString();
+            console.log('[compare_agents] Captured demonstration_time:', demonstrationStartTime);
+            
             // Show compare page after images are set
             showPage('compare');
             console.log('[compare_agents] Switched to compare page');
@@ -993,6 +1055,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // Re-enable buttons for next round
         if (buttons.usePrevious) buttons.usePrevious.disabled = false;
         if (buttons.useUpdated) buttons.useUpdated.disabled = false;
+    });
+
+    // Handle agent update rating confirmation (similarity_level=0)
+    socket.on('agent_update_rating_result', (data) => {
+        console.log('[agent_update_rating_result] Rating saved for similarity_level=0');
+        episodeCount++;
+        console.log(`[agent_update_rating_result] Episode ${episodeCount} of ${MAX_EPISODES} completed`);
+        socket.emit('next_episode', { playerName: playerName });
+        showPage('agentPlay');
+        resetAgentPlayPage();
     });
 
     // Initialize

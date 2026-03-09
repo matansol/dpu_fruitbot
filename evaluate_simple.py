@@ -44,7 +44,7 @@ def evaluate_model_on_level(model_path, config_index, start_level, rand_seed=0):
     
     Args:
         model_path: Path to the model .zip file
-        config_index: Configuration index (0-3)
+        config_index: Configuration index (0-6)
         start_level: Level to evaluate on
         rand_seed: Random seed
     
@@ -84,7 +84,7 @@ def evaluate_model_on_level(model_path, config_index, start_level, rand_seed=0):
     reward_positive = env_config.get('fruitbot_reward_positive', 2.0)
     reward_negative = env_config.get('fruitbot_reward_negative', -1.0)
     reward_wall_hit = env_config.get('fruitbot_reward_wall_hit', -3.0)
-    reward_completion = env_config.get('fruitbot_reward_completion', 5.0)
+    reward_completion = env_config.get('fruitbot_reward_completion', 10.0)
     
     with torch.no_grad():
         while not (done or truncated):
@@ -134,7 +134,7 @@ def main():
                         help="Configuration index (0=no_walls, 1=walls_food, 2=walls_fruits, 3=walls_doors)")
     parser.add_argument("--rand-seed", type=int, default=0,
                         help="Random seed")
-    parser.add_argument("--output", type=str, default="results/simple_eval2.csv",
+    parser.add_argument("--output", type=str, default="results/simple_eval.csv",
                         help="Output CSV file path")
     
     args = parser.parse_args()
@@ -144,7 +144,7 @@ def main():
     print("="*60)
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     all_results = []
-    for config_index in range(4):
+    for config_index in range(7):
         print(f"\nConfiguration:")
         print(f"  Config index: {config_index}")
         print(f"  Levels: {args.level_offset} to {args.level_offset + args.num_levels - 1}")

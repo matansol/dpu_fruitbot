@@ -48,13 +48,6 @@ BASE_ENV_CONFIG = {
     'num_levels': 1,
 }
 
-ENV_OPTION_TO_CONFIG_INDEXES = {
-    "NO_WALLS": [0],
-    "WALLS_FOOD": [1],
-    "WALLS_FRUIT": [2],
-    "WALLS_DOORS": [3],
-}
-
 # Environment configurations - 6 configs indexed 0-5
 ENV_CONFIG_DEFINITIONS_OLD = {
     # Config 0: BASIC - g4_b4
@@ -137,11 +130,21 @@ ENV_CONFIG_DEFINITIONS_OLD = {
     },
 }
 
+''' 
+env config summary:
+0 : no walls, g4 b4
+1 : walls - 0.4, g4 b4
+2 : walls - 0.3, g0 b4
+3 : doors - 0.8, g3 b3
+4 : doors - 0.8, g6 b0
+5 : no walls - g0 b6
+6 : walls - 0.2, g1 b1
+'''
+
 ENV_CONFIG_DEFINITIONS = {
     # Config 0: NO_WALLS - g4_b4
     0: {
         'option_name': 'no_walls',
-        'variant_name': 'g4_b4',
         'fruitbot_num_walls': 0,
         'fruitbot_force_no_walls': True,
         'fruitbot_num_good_range': 0,
@@ -154,7 +157,6 @@ ENV_CONFIG_DEFINITIONS = {
     # Config 1: WALLS_FOOD - g3_b3
     1: {
         'option_name': 'walls_food',
-        'variant_name': 'g4_b4',
         'fruitbot_num_walls': 3,
         'fruitbot_force_no_walls': False,
         'fruitbot_num_good_range': 0,
@@ -164,40 +166,78 @@ ENV_CONFIG_DEFINITIONS = {
         'fruitbot_num_good_min': 3,
         'fruitbot_num_bad_min': 3,
     },
-    # Config 2: WALLS_FRUITS - g6_b0
+    # Config 2: WALLS_JUNK - g0_b4
     2: {
-        'option_name': 'walls_fruits',
-        'variant_name': 'g6_b0',
+        'option_name': 'walls_junk',
         'fruitbot_num_walls': 4,
         'fruitbot_force_no_walls': False,
         'fruitbot_num_good_range': 0,
         'fruitbot_num_bad_range': 0,
         'fruitbot_wall_gap_pct': 30,
         'fruitbot_door_prob_pct': 0,
-        'fruitbot_num_good_min': 6,
-        'fruitbot_num_bad_min': 0,
+        'fruitbot_num_good_min': 0,
+        'fruitbot_num_bad_min': 4,
     },
-    # Config 3: WALLS_DOORS - d80_g4_b4
+    # Config 3: WALLS_DOORS - d80_g3_b3
     3: {
         'option_name': 'walls_doors',
-        'variant_name': 'd80_g4_b4',
         'fruitbot_num_walls': 3,
         'fruitbot_force_no_walls': False,
         'fruitbot_num_good_range': 0,
         'fruitbot_num_bad_range': 0,
         'fruitbot_wall_gap_pct': 40,
         'fruitbot_door_prob_pct': 80,
-        'fruitbot_num_good_min': 4,
-        'fruitbot_num_bad_min': 4,
+        'fruitbot_num_good_min': 3,
+        'fruitbot_num_bad_min': 3,
     },
+
+    # Config 4: WALLS_DOORS_FRUITS - d80_g6_b0
+    4: {
+        'option_name': 'walls_doors_fruits',
+        'fruitbot_num_walls': 3,
+        'fruitbot_force_no_walls': False,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 30,
+        'fruitbot_door_prob_pct': 80,
+        'fruitbot_num_good_min': 6,
+        'fruitbot_num_bad_min': 0,
+    },
+
+    # Config 5: No_WALLS_JUNK - g0_b6
+    5: {
+        'option_name': 'no_walls_junk',
+        'fruitbot_num_walls': 0,
+        'fruitbot_force_no_walls': True,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 0,
+        'fruitbot_door_prob_pct': 0,
+        'fruitbot_num_good_min': 0,
+        'fruitbot_num_bad_min': 6,
+    },
+
+    # Config 6: WALLS_NARROW - g1_b1
+    6: {
+        'option_name': 'walls_narrow',
+        'fruitbot_num_walls': 3,
+        'fruitbot_force_no_walls': False,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 20,
+        'fruitbot_door_prob_pct': 0,
+        'fruitbot_num_good_min': 1,
+        'fruitbot_num_bad_min': 1,
+    },
+    
 }
 
 def get_config_by_index(index: int, seed: int = None) -> dict:
     """
-    Get environment configuration by index (0-5).
+    Get environment configuration by index (0-6).
     
     Args:
-        index: Configuration index (0-5)
+        index: Configuration index (0-6)
         seed: Optional random seed
     
     Returns:
@@ -215,60 +255,9 @@ def get_config_by_index(index: int, seed: int = None) -> dict:
     # Add variant-specific params (excluding metadata)
     variant_config = ENV_CONFIG_DEFINITIONS[index].copy()
     variant_config.pop('option_name', None)
-    variant_config.pop('variant_name', None)
     config.update(variant_config)
     
     return config
-
-
-def get_env_config(option_name: str, variant_name: str = None, seed: int = None) -> dict:
-    """
-    Get environment configuration for a specific option and variant.
-    
-    Args:
-        option_name: One of ENV_OPTION_BASIC, ENV_OPTION_WALLS_FRUITS, ENV_OPTION_WALLS_DOORS
-        variant_name: Specific variant name (e.g., 'g4_b4', 'g8_b0', 'd80_g3_b3'). If None, returns first variant.
-        seed: Random seed for the environment
-    
-    Returns:
-        Dict of environment kwargs ready for gym.make()
-    """
-    # Find matching config by option_name and variant_name
-    matching_configs = []
-    for idx, cfg in ENV_CONFIG_DEFINITIONS.items():
-        if cfg['option_name'] == option_name:
-            if variant_name is None or cfg['variant_name'] == variant_name:
-                matching_configs.append(idx)
-    
-    if not matching_configs:
-        valid_variants = [ENV_CONFIG_DEFINITIONS[i]['variant_name'] 
-                         for i in ENV_CONFIG_DEFINITIONS 
-                         if ENV_CONFIG_DEFINITIONS[i]['option_name'] == option_name]
-        if variant_name is None:
-            raise ValueError(f"No configs found for option: {option_name}")
-        else:
-            raise ValueError(f"Unknown variant: {variant_name}. Valid variants for {option_name}: {valid_variants}")
-    
-    # Use first matching config
-    config_idx = matching_configs[0]
-    return get_config_by_index(config_idx, seed)
-
-
-def get_all_variants(option_name: str = None) -> list:
-    """
-    Get all variant names for an option or all options.
-    
-    Args:
-        option_name: Specific option or None for all
-    
-    Returns:
-        List of (option_name, variant_name) tuples
-    """
-    result = []
-    for idx, cfg in ENV_CONFIG_DEFINITIONS.items():
-        if option_name is None or cfg['option_name'] == option_name:
-            result.append((cfg['option_name'], cfg['variant_name']))
-    return result
 
 
 def get_app_env_configs() -> list:
@@ -282,41 +271,16 @@ def get_app_env_configs() -> list:
       3: walls_doors/d80_g4_b4
     """
     configs = []
-    for idx in range(4):
+    for idx in range(len(ENV_CONFIG_DEFINITIONS)):
         cfg_def = ENV_CONFIG_DEFINITIONS[idx]
         config = get_config_by_index(idx)
         
         # Add descriptive name and metadata
-        config['name'] = f"{cfg_def['option_name'].upper()} - {cfg_def['variant_name']}"
-        config['option_name'] = cfg_def['option_name']
-        config['option_variant'] = cfg_def['variant_name']
+        config['name'] = f"{cfg_def['option_name'].upper()}"
         
         configs.append(config)
     
     return configs
-
-
-def get_env_config_by_index(index: int, seed: int = None) -> dict:
-    """
-    Get environment configuration by index (legacy function, redirects to get_config_by_index).
-    
-    Index mapping:
-      0: basic/g4_b4 (no walls)
-      1: basic/g4_b4 (with walls)
-      2: walls_fruits/g6_b0
-      3: walls_doors/d80_g4_b4
-    
-    Args:
-        index: Configuration index (0-3)
-        seed: Optional random seed
-    
-    Returns:
-        Dict of environment kwargs ready for gym.make()
-    
-    Raises:
-        ValueError: If index is out of range
-    """
-    return get_config_by_index(index, seed)
 
 
 def timeit(func):
@@ -330,7 +294,7 @@ def timeit(func):
         return result
     return wrapper
 
-def load_agent(env, model_path):
+def load_agent(model_path):
     """Load a PPO agent from a saved model."""
     from stable_baselines3 import PPO
     
@@ -810,7 +774,7 @@ def find_x_on_row(frame: np.ndarray, target_hex: str = '#464646', row: int = 470
     return int(np.min(xs))
 
 
-def draw_orenge_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radius: int = 5, out_color: str = 'blue', final_step: bool = False, use_rectangle: bool = False) -> np.ndarray:
+def draw_orange_dot(frame: np.ndarray, x: int, y: int, offset_x: int = 10, radius: int = 5, out_color: str = 'blue', final_step: bool = False, use_rectangle: bool = False) -> np.ndarray:
     """Draw a red filled dot at (x+offset_x, y) on a copy of frame and return it. If x is None, returns a copy unchanged.
     
     Args:
@@ -940,7 +904,7 @@ def record_bot_path_on_image(
                               frame_start: int = 0,
                               frames_jumps: int = 3,
                               page_steps: int = 22,
-                              bot_step: float = 7.2,
+                              bot_step: float = 7.0,
                               row: int = 470,
                               target_hex: str = '#464646',
                               offset_x: int = 6,
@@ -975,7 +939,7 @@ def record_bot_path_on_image(
         cx = find_x_on_row(frame, target_hex, row=row)
         final_step = False
         if frame_index in collect_indexes:
-            out_color = 'blue' #'purple'
+            out_color = 'blue'
         elif frame_index == wall_collision_index:
             out_color = 'red'
             final_step = True
@@ -983,7 +947,7 @@ def record_bot_path_on_image(
             out_color = 'blue'
 
 
-        base_frame = draw_orenge_dot(base_frame, cx, bot_cy, offset_x=offset_x, out_color=out_color, final_step=final_step, use_rectangle=use_rectangle)
+        base_frame = draw_orange_dot(base_frame, cx, bot_cy, offset_x=offset_x, out_color=out_color, final_step=final_step, use_rectangle=use_rectangle)
         # display(Image.fromarray(base_frame))
         if i+1 >= len(frames_indexes):
             jumps = 1
@@ -1170,7 +1134,7 @@ def compare_models(env1, env2, model1: PPO, model2: PPO, save_to_file: bool = Fa
     frames_jumps = 2
     # Record frames for both models
     frames_list1, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1, door_opens1 = record_frames_with_doors(env1, model1, frames_jumps=frames_jumps)
-    frames_list2, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2, door_opens2 = record_frames_with_doors(env2, model2, frames_jumps=frames_jumps)
+    frames_list2, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2, door_opens2 = record_frames_with_doors(env1, model2, frames_jumps=frames_jumps)
 
     # Draw full paths
     if save_to_file and save_path:

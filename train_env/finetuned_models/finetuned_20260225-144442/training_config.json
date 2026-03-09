@@ -1,0 +1,13 @@
+{
+  "data_path": "train_env\\correction_data\\corrections_cfg0_ep1_disagree.npz",
+  "base_agent": "models/fruitbot/20260116-074523_easy/ppo_final",
+  "epochs": 20,
+  "batch_size": 64,
+  "lr": 0.001,
+  "bc_weight": 1.0,
+  "kl_weight": 0.5,
+  "only_disagreements": true,
+  "device": "cuda",
+  "dataset_size": 105,
+  "timestamp": "20260225-144442"
+}

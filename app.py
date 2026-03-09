@@ -13,9 +13,6 @@ import random
 import sys
 from PIL import Image
 
-# Initialize random seed with current time to ensure true randomness
-random.seed()
-
 # Add procgen imports
 import gym
 import procgen
@@ -184,6 +181,8 @@ class UserChoice(Base):
     env_level_feedback = Column(Integer, nullable=True)
     env_level_demonstration = Column(Integer, nullable=True)
     env_config_demonstration = Column(Integer, nullable=True)
+    agent_rating = Column(Integer, nullable=True)  # 1-7 scale rating of chosen agent performance
+    feedback_correctness = Column(Integer, nullable=True)  # the number of agreement between the user's feedback and the updated agent
 
 def clear_database() -> None:
     """Clears the database tables."""
@@ -218,7 +217,6 @@ class GameControl:
         user_id: str,
         similar_level_env: int = 0,
         feedback_partial_view: bool = True,
-        env_seed_list: List[int] = list(range(100, 1000)),
     ) -> None:
         self.agent_index = 1
         self.models_paths = models_paths
@@ -245,23 +243,18 @@ class GameControl:
         self.past_choices: set = set()  # To avoid repeating the same choice
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
-        self.env_seed_list: list = list(range(100, 1000))  # List of seeds for environments
+        # self.env_seed_list: list = list(range(100, 1000))  # List of seeds for environments
         self.env_seed_used: list = []  # List of used environments
         self.current_config_index: int = 0
         self.last_activity: float = time.time()  # Track last activity for cleanup
         self.game_finished: bool = False  # Track if game is finished
         self.demonstration_level: int = -1  # Track the level used for demonstration (if any)
         self.demonstration_env_config: int = -1  # Track the env config index used for demonstration (if any)
-        
+        self.rng = random.SystemRandom()  # OS-backed RNG, isolated from global random.seed()
+        self.update_agent(None, None)
         # Use centralized environment configurations from dpu_clf
         # This ensures consistency with evaluate_comprehensive.py
         self.env_configs = get_app_env_configs()
-        """
-        Configs Index mapping:
-            0-2: basic variants (g3_b6, g6_b2, g6_b6)
-            3-4: walls_fruits variants (g4_b0, g8_b0)
-            5-8: walls_doors variants (d30_g6_b2, d30_g6_b6, d60_g6_b2, d60_g6_b6)
-        """
     
     def clear_episode_data(self) -> None:
         """Clear episode data to free memory after sending to client."""
@@ -331,7 +324,7 @@ class GameControl:
         """
         # Select random config if not specified
         if config_index is None:
-            config_index = random.randint(0, len(self.env_configs) - 1)
+            config_index = self.rng.randrange(len(self.env_configs))
             
         
         # Get config and make a copy to avoid modifying the original
@@ -351,35 +344,37 @@ class GameControl:
         
         print(f"[create_new_env] Using config: {config_name} (index {config_index})")
         
-        seed = env_seed if env_seed else self.env_seed
-        config['rand_seed'] = seed  # Update seed in config
+        config['rand_seed'] = env_seed  # Update seed in config
         config['num_levels'] = 1         # EnvConfig default
         config['start_level'] = start_level
         env = gym.make("procgen-fruitbot-v0", **config)
         return env, config_index, config_name
 
-        
-    @timeit
+    # @timeit
     def reset(self) -> np.ndarray:
-        # optinal_seed = [seed for seed in self.env_seed_list if seed not in self.env_seed_used]
-        optinal_seed = list(range(100, 1000))
-        # Set the environment FIRST before calling update_agent
-        self.env_seed = random.choice(optinal_seed)
-        self.env_seed_used.append(self.env_seed)
+        # # optinal_seed = [seed for seed in self.env_seed_list if seed not in self.env_seed_used]
+        # optinal_seed = list(range(100, 1000))
+        # # Set the environment FIRST before calling update_agent
+        # self.env_seed = self.rng.choice(optinal_seed)
+        # self.env_seed_used.append(self.env_seed)
  
  # ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FODD", "WALLS_FRUIT" ,"WALLS_DOORS"]
 
-        config_order = [0, 1, 3, 1, 3]
-        self.current_config_index = config_order[self.episode_num % len(config_order)]
+        # config_order = [0, 1, 3, 1, 3]
+        # self.current_config_index = config_order[self.episode_num % len(config_order)]
 
-        self.current_level = random.randint(0, 99)  # Randomize start level for more variety
+        self.current_config_index = 0
+        if self.episode_num > 0:
+            self.current_config_index = self.rng.randrange(len(self.env_configs))
+        self.current_level = self.rng.randrange(0, 21)  # Randomize start level for more variety
         
-        self.env, self.current_config_index, self.current_config_name = self.create_new_env(self.env_seed, config_index=self.current_config_index, start_level=self.current_level)
+        self.env, self.current_config_index, self.current_config_name = self.create_new_env(env_seed=0, config_index=self.current_config_index, start_level=self.current_level)
         # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
-        print(f"[reset] Created new environment with start_level={self.current_level}, config: ({self.current_config_index}) {self.current_config_name}")
-        
+        print("="*60)
+        print(f"[reset] New environment start with level={self.current_level}, config: ({self.current_config_index}) {self.current_config_name}")
+        print("="*60)
         # Now safe to call update_agent since self.env exists
-        self.update_agent(None, None)
+        # self.update_agent(None, None)
         
         # Old Gym API returns only observation, not (obs, info)
         obs = self.env.reset()
@@ -389,7 +384,8 @@ class GameControl:
         self.collision_positions = []  # List of {x, y, type, pixel_x, pixel_y}
         self.feedback_score = 0
         self.demonstration_level: int = -1  
-        self.demonstration_env_config: int = -1  
+        self.demonstration_env_config: int = -1
+        self.feedback_correctness = 0  
         # self.saved_env = copy.deepcopy(self.env)
         
         self.step_count = 0  # Reset step count
@@ -402,14 +398,6 @@ class GameControl:
         t_start = time.time()
         observation, reward, done, info = self.env.step(action)
         t_env_step = time.time() - t_start
-        
-        # if len(result) == 5:
-        #     observation, reward, terminated, truncated, info = result
-        #     done = terminated or truncated
-        # elif len(result) == 4:
-        #     observation, reward, done, info = result
-        # else:
-        #     raise ValueError(f"Unexpected step() return length: {len(result)}")
 
         # Convert numpy types to Python native types for JSON serialization
         reward = float(reward)
@@ -503,17 +491,14 @@ class GameControl:
         action = key_to_action.get(action_str, FRUITBOT_ACTIONS['STAY'])
         return self.step(action)
 
-    @timeit
+    # @timeit
     def get_initial_observation(self) -> Dict[str, Any]:
         try:
             print(f"[get_initial_observation] Starting reset...")
             self.current_obs = self.reset()
             self.episode_actions = []
-            
-            print(f"[get_initial_observation] Reset complete, obs shape: {self.current_obs.shape if hasattr(self.current_obs, 'shape') else 'N/A'}")
-            
+                        
             try:
-                print(f"[get_initial_observation] Getting initial frame from step with NOOP action...")
                 # Take a NOOP step to get the first info dict with 'rgb'
                 obs, reward, done, info = result = self.env.step(1)  # NOOP/STAY action
                 
@@ -523,9 +508,7 @@ class GameControl:
                 if frame is None:
                     print("[get_initial_observation] WARNING: 'rgb' not in info, using observation")
                     frame = obs
-                
-                print(f"[get_initial_observation] Got initial frame, shape: {frame.shape}")
-                
+                                
             except Exception as render_error:
                 print(f"[get_initial_observation] ERROR getting initial frame: {render_error}")
                 import traceback
@@ -534,7 +517,6 @@ class GameControl:
             
             # Save initial frame
             
-            print(f"[get_initial_observation] Converting frame to base64...")
             # Convert directly to base64 with resizing
             self.episode_frames = [frame]
             self.episode_num += 1
@@ -563,17 +545,17 @@ class GameControl:
             traceback.print_exc()
             raise
 
-    def agent_action(self) -> Dict[str, Any]:
-        # Get action from PPO agent
-        # agent_config = self.models_paths[self.agent_index]
+    # def agent_action(self) -> Dict[str, Any]:
+    #     # Get action from PPO agent
+    #     # agent_config = self.models_paths[self.agent_index]
         
-        # PPO agent: predict returns (action, _states)
-        action, _ = self.ppo_agent.predict(self.current_obs, deterministic=True)
-        action = action.item() if hasattr(action, 'item') else int(action)
+    #     # PPO agent: predict returns (action, _states)
+    #     action, _ = self.ppo_agent.predict(self.current_obs, deterministic=True)
+    #     action = action.item() if hasattr(action, 'item') else int(action)
         
-        result = self.step(action, True)
-        result['action'] = action
-        return result
+    #     result = self.step(action, True)
+    #     result['action'] = action
+    #     return result
 
     def revert_to_old_agent(self) -> None:
         self.ppo_agent = self.prev_agent
@@ -585,7 +567,7 @@ class GameControl:
     def count_similar_actions(
         self,
         other_agent: Any,
-        other_agent_config: Dict[str, Any],
+        # other_agent_config: Dict[str, Any],
         feedback_indexes: List[int]
     ) -> int:
         similar_actions = 0
@@ -607,14 +589,13 @@ class GameControl:
     @timeit
     def update_agent(self, data: Optional[Dict[str, Any]], sid: Optional[str]) -> Optional[bool]:
         print(f"\n{'='*80}")
-        print(f"[update_agent] CALLED - Starting agent update process")
-        print(f"[update_agent] User ID: {self.user_id}")
+        print(f"[update_agent] CALLED - Starting agent update process - User ID: {self.user_id}")
         print(f"[update_agent] Current agent index: {self.agent_index}")
         print(f"[update_agent] observations stored: {len(self.episode_obs)}")
         
         if self.ppo_agent is None:
             agent_config = self.models_paths[self.agent_index]
-            self.ppo_agent = load_agent(self.env, agent_config['path'])
+            self.ppo_agent = load_agent(agent_config['path'])
             self.current_agent_path = agent_config['path']
             self.prev_agent = self.ppo_agent
             self.prev_agent_path = self.current_agent_path
@@ -638,12 +619,13 @@ class GameControl:
                 
         # Remove duplicates
         unique_feedback = {}
+        before_dedup = len(user_feedback)
         for feedback in user_feedback:
             unique_feedback[feedback['index']] = feedback
         user_feedback = list(unique_feedback.values())
         self.number_of_feedbacks = len(user_feedback)
         
-        print(f"[update_agent] After deduplication: {len(user_feedback)} unique feedback items")
+        print(f"[update_agent] Found {before_dedup - self.number_of_feedbacks} duplications\nAfter deduplication: {len(user_feedback)} unique feedback items")
 
         # Save feedback to DB
         if save_to_db and sid:
@@ -652,20 +634,13 @@ class GameControl:
                 try:
                     session = SessionLocal()
                     action_index = action_feedback['index']
-                    # if action_index >= len(self.episode_obs):
-                    #     obs_str = "No observation available"
-                    # else:
-                    #     obs = self.episode_obs[action_index]
-                    #     # For Procgen, obs is already an RGB array
-                    #     obs_str = json.dumps(obs.tolist() if isinstance(obs, numpy.ndarray) else str(obs))[:1000]
-                    
                     agent_action = action_feedback['agent_action']
                     feedback_action = FeedbackAction(
                         user_id=self.user_id,
                         env_state=None, #obs_str[:1000],  # Truncate to fit column
                         agent_action=str(agent_action),
                         feedback_action=str(action_feedback['feedback_action']),
-                        feedback_explanation=action_feedback.get('feedback_explanation', ''),
+                        feedback_explanation='',
                         action_index=action_index,
                         episode_index=self.episode_num,
                         timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
@@ -695,7 +670,7 @@ class GameControl:
             model_name = agent_info['name']
             agent_data = self.models_paths[model_i]
             path = agent_data['path']
-            agent = load_agent(self.env, path)
+            agent = load_agent(path)
             loaded_agents.append(agent)
 
             agent_correctness = 0
@@ -710,9 +685,11 @@ class GameControl:
                 
                 if agent_predict_action == int(action_feedback['feedback_action']):
                     agent_correctness += 1
+                elif agent_predict_action != int(action_feedback['agent_action']):
+                    agent_correctness += 0.25  # Partial credit for being different from the original agent when feedback indicates original was wrong
 
             if agent_correctness > 0:
-                similar_actions = self.count_similar_actions(agent, agent_data, feedback_indexes)
+                similar_actions = self.count_similar_actions(agent, feedback_indexes) # agent, agent_data, feedback_indexes)
                 optimal_agents.append({
                     "agent": agent,
                     "name": model_name,
@@ -721,11 +698,12 @@ class GameControl:
                     "similar_actions": similar_actions,
                     "model_index": model_i
                 })
+                self.feedback_correctness = agent_correctness
 
         print(f"\n{'_'*80}")
         print(f"[update_agent] CANDIDATE AGENTS SUMMARY:")
         for agent_dict in optimal_agents:
-            print(f"  - {agent_dict['name']}: correctness={agent_dict['correctness_feedback']}, similar={agent_dict['similar_actions']}")
+            print(f"  - ({agent_dict['model_index']}) {agent_dict['name']}: correctness={agent_dict['correctness_feedback']}, similar={agent_dict['similar_actions']}")
         print(f"{'_'*80}\n")
 
         if len(optimal_agents) == 0:
@@ -737,6 +715,7 @@ class GameControl:
                 "correctness_feedback": agent_correctness,
                 "model_index": model_i
             })
+            self.feedback_correctness = 0
 
         def agent_cmp(a, b):
             if a["correctness_feedback"] > b["correctness_feedback"]:
@@ -797,43 +776,44 @@ class GameControl:
             return {}
         start_level_options = []
         if similarity_level == 1: # same env and same seed/level
-            self.env_seed_demonstration = self.env_seed  # Same seed for demonstration
+            # self.env_seed_demonstration = self.env_seed  # Same seed for demonstration
             start_level_options = [self.current_level]  # Use the same start level as the current environment
             config_idx = self.current_config_index
+            print(f"[agents_different_routs] Similarity level 1 - same env, seed, and level (config={config_idx}, level={self.current_level})")
         elif similarity_level == 2: # same_config different level
             # self.env_seed_demonstration = random.choice(self.env_seed_list)
             config_idx = self.current_config_index
             print(f"[agents_different_routs] Similarity level 2 - same config={config_idx} different level")
-            print(f"[agents_different_routs] congig list= {self.models_distance[self.prev_agent_index][self.agent_index]['configs']}")
-            start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
+            print(f"[agents_different_routs] config list= {self.models_distance[self.prev_agent_index][self.agent_index]['configs']}")
+            potential_configs_levels = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
+            if config_idx >= len(potential_configs_levels):
+                start_level_options = list(range(100))
+            else:
+                start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
 
         elif similarity_level == 3: # contrast - use models_distance to find best differentiating env
             config_idx = self.models_distance[self.prev_agent_index][self.agent_index]['contrast_config']
-            start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
+            potential_configs_levels = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
+            if config_idx >= len(potential_configs_levels):
+                start_level_options = list(range(100))
+            else:
+                start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
+            print(f"[agents_different_routs] Similarity level 3 - contrast config={config_idx} with levels: {start_level_options}")
 
         else: # random config and level
-            # Use current time nanoseconds to ensure truly random selection each time
-            import time
-            random.seed(time.time_ns())
-            config_idx = random.randint(0, len(self.env_configs) - 1)
+            config_idx = self.rng.randrange(len(self.env_configs))
             start_level_options = list(range(100))  # Any level for random config
+            print(f"[agents_different_routs] Similarity level {similarity_level} - random config={config_idx} and random level")
 
-        self.demonstration_level = random.choice(start_level_options)
+        self.demonstration_level = self.rng.choice(start_level_options)
         self.demonstration_env_config = config_idx
+        print("="*60)
         print(f"[agents_different_routs] Selected start_level={self.demonstration_level} from options: {start_level_options}, config index: {config_idx}")
+        print("="*60)
         self.env_seed_used.append(self.env_seed_demonstration)
                 
         env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=self.demonstration_level)
         env2, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=self.demonstration_level)
-
-        # frames_list_updated, frames_indexes1, collect_indexes1, wall_collision_index1, collisions1 = dpu_clf.record_frames(env1, self.ppo_agent, frames_jumps=5)
-        # frames_list_prev, frames_indexes2, collect_indexes2, wall_collision_index2, collisions2 = dpu_clf.record_frames(env2, self.prev_agent, frames_jumps=5)
-        
-        # img_updated, _ = dpu_clf.draw_full_path(frames_list_updated, frames_indexes=frames_indexes1, collect_indexes=collect_indexes1, collisions=collisions1, frames_jumps=5, wall_collision_index=wall_collision_index1, use_rectangle=True)
-        # print(f"[agents_different_routs] Path image 1 size: {img_updated.size if img_updated else 'None'}")
-        
-        # img_prev, _ = dpu_clf.draw_full_path(frames_list_prev, frames_indexes=frames_indexes2, collect_indexes=collect_indexes2, collisions=collisions2, frames_jumps=5, wall_collision_index=wall_collision_index2, use_rectangle=True)
-        # print(f"[agents_different_routs] Path image 2 size: {img_prev.size if img_prev else 'None'}")
 
         # current/updated agent path
         frames1, frames_indexes, collect_indexes, wall_collision_index, collisions, door_opens = dpu_clf.record_frames_with_doors(env1, self.ppo_agent, frames_jumps=5)
@@ -893,6 +873,7 @@ class GameControl:
             user_choice: bool,
             explanation: str,
             demonstration_time_fmt: str,
+            agent_rating: int = None,
         ) -> None:
         """Save the user's choice between agents to the database."""
         if not save_to_db:
@@ -915,6 +896,8 @@ class GameControl:
                 env_level_feedback=self.current_level,
                 env_level_demonstration=self.demonstration_level,
                 env_config_demonstration=self.demonstration_env_config,
+                agent_rating=agent_rating,
+                feedback_correctness=self.feedback_correctness
             )
             session.add(user_choice_entry)
             session.commit()
@@ -955,82 +938,82 @@ def _lookup_user(sid: str) -> Tuple[str, Optional['GameControl']]:
 
 # Procgen Fruitbot models configuration
 
-easy_models_dict_old = {
-    # Behavior 1: 
-    1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
+# easy_models_dict_old = {
+#     # Behavior 1: 
+#     1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
     
-    # Behavior 2: don't open doors and collect all food
-    2: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 2, 'name': 'no_doors_collect_all'},
+#     # Behavior 2: don't open doors and collect all food
+#     2: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 2, 'name': 'no_doors_collect_all'},
     
-    # Behavior 3: don't open doors and collect only fruits
-    3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
+#     # Behavior 3: don't open doors and collect only fruits
+#     3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
     
-    # Behavior 4: collect only fruits and open doors
-    4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
+#     # Behavior 4: collect only fruits and open doors
+#     4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
     
-    # Behavior 5: open some doors and collect all foods
-    5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
+#     # Behavior 5: open some doors and collect all foods
+#     5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
     
-    # Behavior 6: open doors and avoid all foods  
-    6: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_avoid_food'},
+#     # Behavior 6: open doors and avoid all foods  
+#     6: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_avoid_food'},
     
-    # Behavior 7: try to open doors and collect only fruits
-    7: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 7, 'name': 'only_fruits_tries_open_doors'},
+#     # Behavior 7: try to open doors and collect only fruits
+#     7: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 7, 'name': 'only_fruits_tries_open_doors'},
 
-    # Behavior 8: do not open doors and collect only junk
-    8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
-}
+#     # Behavior 8: do not open doors and collect only junk
+#     8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
+# }
 
-models_distance_old = {
-    1: {
-        7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-        8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-    },
-    2: {
-        8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-    },
-    3: {
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-    },
-    4: {
-        7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
-        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
-    },
-    5: {
-        4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
-    },
-    6: {
-        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-        1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
-    },
-    7: {
-        4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-    },
-    8: {
-        1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-        6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-        5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-        3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-    }
-    }
+# models_distance_old = {
+#     1: {
+#         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#         8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#     },
+#     2: {
+#         8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#     },
+#     3: {
+#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
+#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#     },
+#     4: {
+#         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
+#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
+#     },
+#     5: {
+#         4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
+#     },
+#     6: {
+#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#         1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
+#     },
+#     7: {
+#         4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
+#     },
+#     8: {
+#         1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
+#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
+#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
+#     }
+#     }
 
 easy_models_dict = {
     # Behavior 1: don't open doors and collect all food
@@ -1217,7 +1200,6 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
                     user_id,
                     similar_level_env=similarity_level,
                     feedback_partial_view=True,
-                    env_seed_list=list(range(10000, 20000)),
                 )
             except Exception as gc_error:
                 print(f"[start_game] ERROR creating GameControl: {gc_error}")
@@ -1385,14 +1367,6 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
     episode_positions = []  # Track bot x-positions
     total_score = 0
     step_count = 0
-    
-    # Bot tracking
-    cx = 230  # Starting x position
-    move_size = 35  # Movement amount per action
-    
-    # Streaming configuration
-    BATCH_SIZE = 20  # Send frames every 20 steps
-    batch_start_index = 0
     # Run the agent until episode is done
     done = False
     while not done and step_count < 1000:  # Safety limit
@@ -1542,27 +1516,6 @@ async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playe
     
     print(f"{'='*80}\n")
 
-# @sio.on("finish_game")
-# async def finish_game(sid: str) -> None:
-#     user_id = sid_to_user.get(sid)
-#     if not user_id or user_id not in game_controls:
-#         await sio.emit("error", {"error": "User not found"}, to=sid)
-#         return
-    
-#     user_game = game_controls[user_id]
-#     user_game.game_finished = True
-#     scores = user_game.scores_lst
-    
-#     await sio.emit("finish_game", {"scores": scores}, to=sid)
-    
-#     # Clean up resources after game finishes
-#     print(f"[finish_game] Game finished for user {user_id}, cleaning up resources")
-#     user_game.cleanup_all()
-#     del game_controls[user_id]
-#     if user_id in user_to_sid:
-#         del user_to_sid[user_id]
-#     print(f"[finish_game] Resources freed for user {user_id}")
-
 @sio.on("start_cover_page")
 async def start_cover_page(sid: str) -> None:
     """
@@ -1580,6 +1533,55 @@ async def start_cover_page(sid: str) -> None:
 
     # Emit an event to transition to the welcome page
     await sio.emit("go_to_welcome_page", {}, to=sid)
+
+@sio.on("agent_update_rating")
+async def agent_update_rating(sid: str, data: Dict[str, Any]) -> None:
+    """Handle rating submission for similarity_level=0 agent updates."""
+    user_id, user_game = _lookup_user(sid)
+    if not user_game:
+        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+        return
+
+    async with _get_user_lock(user_id):
+        # Re-check after acquiring lock
+        if user_id not in game_controls:
+            await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+            return
+        user_game = game_controls[user_id]
+        user_game.update_activity()
+
+        if user_game.game_finished:
+            print(f"[agent_update_rating] User {user_id} game already finished, ignoring")
+            return
+
+        demonstration_time_str = data.get('demonstration_time', None)
+        print(f"[agent_update_rating] DEBUG: demonstration_time received: {demonstration_time_str}")
+        
+        if demonstration_time_str:
+            try:
+                dt = datetime.fromisoformat(demonstration_time_str.replace('Z', '+00:00'))
+                demonstration_time_fmt = dt.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[agent_update_rating] DEBUG: Parsed demonstration_time: {demonstration_time_fmt}")
+            except Exception as e:
+                print(f"[agent_update_rating] ERROR: Failed to parse demonstration_time: {demonstration_time_str}, error: {e}")
+                demonstration_time_fmt = demonstration_time_str
+        else:
+            demonstration_time_fmt = datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[agent_update_rating] WARNING: No demonstration_time provided, using current time: {demonstration_time_fmt}")
+
+        # For similarity_level=0, user chose to keep the updated agent (use_updated=True)
+        if save_to_db:
+            agent_rating = data.get('agent_rating', None)
+            print(f"[agent_update_rating] Saving rating {agent_rating} for user {user_id}, episode {user_game.episode_num}")
+            user_game.save_user_choice(
+                user_choice=True,  # Always True for similarity_level=0 (kept updated agent)
+                explanation='',
+                demonstration_time_fmt=demonstration_time_fmt,
+                agent_rating=agent_rating
+            )
+    
+    await sio.emit("agent_update_rating_result", {'success': True}, to=sid)
+
 
 @sio.on("agent_select")
 async def agent_select(sid: str, data: Dict[str, Any]) -> None:
@@ -1601,18 +1603,24 @@ async def agent_select(sid: str, data: Dict[str, Any]) -> None:
             return
 
         demonstration_time_str = data.get('demonstration_time', None)
+        print(f"[agent_select] DEBUG: demonstration_time received: {demonstration_time_str}")
+        print(f"[agent_select] DEBUG: Full data received: {data}")
+        
         if demonstration_time_str:
             try:
                 dt = datetime.fromisoformat(demonstration_time_str.replace('Z', '+00:00'))
                 demonstration_time_fmt = dt.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[agent_select] DEBUG: Parsed demonstration_time: {demonstration_time_fmt}")
             except Exception as e:
-                print(f"Failed to parse demonstration_time: {demonstration_time_str}, error: {e}")
+                print(f"[agent_select] ERROR: Failed to parse demonstration_time: {demonstration_time_str}, error: {e}")
                 demonstration_time_fmt = demonstration_time_str
         else:
             demonstration_time_fmt = datetime.utcnow().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[agent_select] WARNING: No demonstration_time provided, using current time: {demonstration_time_fmt}")
 
         if save_to_db:
-            user_game.save_user_choice(data['use_updated'], data.get('choiceExplanation', ''), demonstration_time_fmt)
+            agent_rating = data.get('agent_rating', None)
+            user_game.save_user_choice(data['use_updated'], data.get('choiceExplanation', ''), demonstration_time_fmt, agent_rating=agent_rating)
         
         if data['use_updated'] == False:
             user_game.revert_to_old_agent()
