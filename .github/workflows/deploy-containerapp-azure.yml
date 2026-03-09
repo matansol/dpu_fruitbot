@@ -19,6 +19,10 @@ jobs:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       AZURE_CONTAINERAPP_NAME: ${{ vars.AZURE_CONTAINERAPP_NAME }}
       DEFAULT_IMAGE: ${{ vars.AZURE_CONTAINER_IMAGE }}
+      AZURE_CONTAINERAPP_ENVIRONMENT: ${{ vars.AZURE_CONTAINERAPP_ENVIRONMENT }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_TARGET_PORT: ${{ vars.AZURE_TARGET_PORT }}
+      AZURE_INGRESS: ${{ vars.AZURE_INGRESS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +38,12 @@ jobs:
         run: |
           az account show --query "{subscriptionId:id, tenantId:tenantId, name:name}" -o table
 
+      - name: List Container Apps in resource group
+        run: |
+          az containerapp list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[].{name:name,location:location}" -o table
+
       - name: Resolve deployment image
         id: image
         shell: bash
@@ -48,12 +58,51 @@ jobs:
             exit 1
           fi
 
+      - name: Detect Container App
+        id: detect
+        shell: bash
+        run: |
+          if az containerapp show --name "$AZURE_CONTAINERAPP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Update Container App
+        if: steps.detect.outputs.exists == 'true'
         run: |
           az containerapp update \
             --name "$AZURE_CONTAINERAPP_NAME" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --image "${{ steps.image.outputs.value }}"
+
+      - name: Create Container App (if missing)
+        if: steps.detect.outputs.exists == 'false'
+        shell: bash
+        run: |
+          if [ -z "$AZURE_CONTAINERAPP_ENVIRONMENT" ]; then
+            echo "Container App does not exist and AZURE_CONTAINERAPP_ENVIRONMENT is not set."
+            echo "Set repo variable AZURE_CONTAINERAPP_ENVIRONMENT (existing Container Apps environment name)."
+            exit 1
+          fi
+
+          TARGET_PORT="${AZURE_TARGET_PORT:-8000}"
+          INGRESS="${AZURE_INGRESS:-external}"
+
+          CREATE_ARGS=(
+            --name "$AZURE_CONTAINERAPP_NAME"
+            --resource-group "$AZURE_RESOURCE_GROUP"
+            --environment "$AZURE_CONTAINERAPP_ENVIRONMENT"
+            --image "${{ steps.image.outputs.value }}"
+            --target-port "$TARGET_PORT"
+            --ingress "$INGRESS"
+          )
+
+          if [ -n "$AZURE_LOCATION" ]; then
+            CREATE_ARGS+=(--location "$AZURE_LOCATION")
+          fi
+
+          az containerapp create "${CREATE_ARGS[@]}"
 
       - name: Show latest revision
         run: |
