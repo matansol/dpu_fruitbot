@@ -144,7 +144,7 @@ def main():
     print("="*60)
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     all_results = []
-    for config_index in range(7):
+    for config_index in range(4):
         print(f"\nConfiguration:")
         print(f"  Config index: {config_index}")
         print(f"  Levels: {args.level_offset} to {args.level_offset + args.num_levels - 1}")

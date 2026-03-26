@@ -112,6 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let episodeCount = 0;  // Track number of episodes completed
     const MAX_EPISODES = 4;  // End game after 4 episodes
     let gameStarted = false;  // Track if the game has been started (for reconnection)
+    let sessionRecoveryAttempted = false;  // Avoid repeated recovery loops
     let demonstrationStartTime = null;  // Track when comparison demonstration is shown
 
     // Playback state
@@ -527,7 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
         buttons.playVideo.disabled = true;
         buttons.playVideo.textContent = 'Playing...';
         console.log('[playVideo] Emitting play_episode event');
-        socket.emit('play_episode', {});
+        socket.emit('play_episode', { playerName: playerName });
     });
 
     buttons.playSequence.addEventListener('click', () => {
@@ -928,6 +929,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    socket.on('registered', (data) => {
+        console.log('[socket] Register response:', data);
+        if (!data || !data.status) {
+            return;
+        }
+
+        if (data.status === 'ok') {
+            sessionRecoveryAttempted = false;
+            return;
+        }
+
+        if (data.status === 'no_session' && gameStarted) {
+            console.warn('[socket] No server-side session found, creating a fresh session');
+            hideLoading();
+            socket.emit('start_game', { playerName: playerName, group: group });
+            showPage('agentPlay');
+            resetAgentPlayPage();
+            sessionRecoveryAttempted = false;
+        }
+    });
+
     socket.on('disconnect', () => {
         console.log('[socket] ===== DISCONNECTED FROM SERVER =====');
     });
@@ -937,8 +959,15 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('[socket] Error data:', data);
         hideLoading();
         if (data.code === 'SESSION_EXPIRED') {
-            console.warn('[socket] Session expired, redirecting to start');
-            alert('Your session has expired. The page will reload.');
+            if (!sessionRecoveryAttempted && gameStarted && playerName) {
+                console.warn('[socket] Session expired, attempting one-time recovery');
+                sessionRecoveryAttempted = true;
+                socket.emit('register', { playerName: playerName, group: group });
+                return;
+            }
+
+            console.warn('[socket] Session could not be recovered, reloading page');
+            alert('Session ended on the server. The page will reload.');
             window.location.reload();
             return;
         }

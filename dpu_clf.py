@@ -141,7 +141,7 @@ env config summary:
 6 : walls - 0.2, g1 b1
 '''
 
-ENV_CONFIG_DEFINITIONS = {
+ENV_CONFIG_DEFINITIONS_EXTENDED = {
     # Config 0: NO_WALLS - g4_b4
     0: {
         'option_name': 'no_walls',
@@ -231,6 +231,58 @@ ENV_CONFIG_DEFINITIONS = {
     },
     
 }
+
+ENV_CONFIG_DEFINITIONS = {
+    # Config 0: NO_WALLS - g4_b4
+    0: {
+        'option_name': 'no_walls',
+        'fruitbot_num_walls': 0,
+        'fruitbot_force_no_walls': True,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 0,
+        'fruitbot_door_prob_pct': 0,
+        'fruitbot_num_good_min': 4,
+        'fruitbot_num_bad_min': 4,
+    },
+    # Config 1: WALLS_JUNK - g0_b4
+    1: {
+        'option_name': 'walls_junk',
+        'fruitbot_num_walls': 3,
+        'fruitbot_force_no_walls': False,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 30,
+        'fruitbot_door_prob_pct': 0,
+        'fruitbot_num_good_min': 0,
+        'fruitbot_num_bad_min': 4,
+    },
+    # Config 2: WALLS_DOORS_FRUITS - d80_g6_b0
+    2: {
+        'option_name': 'walls_doors_fruits',
+        'fruitbot_num_walls': 3,
+        'fruitbot_force_no_walls': False,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 30,
+        'fruitbot_door_prob_pct': 80,
+        'fruitbot_num_good_min': 6,
+        'fruitbot_num_bad_min': 0,
+    },
+    # Config 3: WALLS_DOORS - d80_g3_b3
+    3: {
+        'option_name': 'walls_doors',
+        'fruitbot_num_walls': 3,
+        'fruitbot_force_no_walls': False,
+        'fruitbot_num_good_range': 0,
+        'fruitbot_num_bad_range': 0,
+        'fruitbot_wall_gap_pct': 40,
+        'fruitbot_door_prob_pct': 80,
+        'fruitbot_num_good_min': 3,
+        'fruitbot_num_bad_min': 3,
+    },    
+}
+
 
 def get_config_by_index(index: int, seed: int = None) -> dict:
     """

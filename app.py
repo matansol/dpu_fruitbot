@@ -212,15 +212,17 @@ class GameControl:
     def __init__(
         self,
         models_paths: Dict[int, Dict[str, Any]],
-        models_distance: Dict[int, Dict[int, Dict[str, Any]]], # {base_agent_idx: {next_agent_idx: {'name': str, 'configs': [[seed1, seed2, seed3], ...]}}}
+        models_neighbors: Dict[int, Dict[int, Dict[str, Any]]], # {base_agent_idx: {next_agent_idx: {'name': str, 'configs': [[seed1, seed2, seed3], ...]}}}
                                                                  # configs[i] contains top 3 differentiating seeds for env config index i
+        levels_with_low_success: Dict[int, List[int]], # {config_index: [level1, level2, ...]} - levels with low success rates for each config index, used to prioritize demonstration levels
         user_id: str,
         similar_level_env: int = 0,
         feedback_partial_view: bool = True,
     ) -> None:
         self.agent_index = 1
         self.models_paths = models_paths
-        self.models_distance = models_distance
+        self.models_neighbors = models_neighbors
+        self.levels_with_low_seccses = levels_with_low_success
         self.episode_num = 0
         self.scores_lst = []
         self.last_obs = None
@@ -228,8 +230,6 @@ class GameControl:
         self.episode_frames = []
         self.episode_obs = []
         self.user_id = user_id
-        self.wall_penalty: float = -3.0
-        self.last_score: float = 0.0
         self.similar_level_env: int = int(similar_level_env)
         self.ppo_agent = None
         self.prev_agent = None
@@ -243,7 +243,6 @@ class GameControl:
         self.past_choices: set = set()  # To avoid repeating the same choice
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
-        # self.env_seed_list: list = list(range(100, 1000))  # List of seeds for environments
         self.env_seed_used: list = []  # List of used environments
         self.current_config_index: int = 0
         self.last_activity: float = time.time()  # Track last activity for cleanup
@@ -301,6 +300,12 @@ class GameControl:
         """Update last activity timestamp."""
         self.last_activity = time.time()
 
+    def _get_optional_levels(self, config_index: int) -> List[int]:
+        """Get list of optional levels for a given config index, excluding those with low success."""
+        skip_levels = self.levels_with_low_seccses.get(config_index, [])
+        optional_levels = [l for l in range(100) if l not in skip_levels]
+        return optional_levels
+    
     def create_new_env(
         self,
         env_seed: int = 0,
@@ -331,7 +336,6 @@ class GameControl:
         config = self.env_configs[config_index].copy()
         config_name = config.pop('name')  # Remove name from kwargs
         config.pop('option_name', None)  # Remove metadata fields not needed by gym.make
-        config.pop('option_variant', None)  # Remove variant metadata field
 
         # # Apply optional structured layout controls without changing existing presets
         # if layout_mode is not None:
@@ -344,29 +348,34 @@ class GameControl:
         
         print(f"[create_new_env] Using config: {config_name} (index {config_index})")
         
+        # Defensive normalization: gym3 expects a scalar numeric start_level.
+        if isinstance(start_level, (list, tuple, np.ndarray)):
+            start_level = self.rng.choice(list(start_level)) if len(start_level) > 0 else 0
+
         config['rand_seed'] = env_seed  # Update seed in config
         config['num_levels'] = 1         # EnvConfig default
-        config['start_level'] = start_level
+        config['start_level'] = int(start_level)
         env = gym.make("procgen-fruitbot-v0", **config)
         return env, config_index, config_name
 
     # @timeit
     def reset(self) -> np.ndarray:
-        # # optinal_seed = [seed for seed in self.env_seed_list if seed not in self.env_seed_used]
-        # optinal_seed = list(range(100, 1000))
-        # # Set the environment FIRST before calling update_agent
-        # self.env_seed = self.rng.choice(optinal_seed)
-        # self.env_seed_used.append(self.env_seed)
  
  # ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FODD", "WALLS_FRUIT" ,"WALLS_DOORS"]
 
         # config_order = [0, 1, 3, 1, 3]
         # self.current_config_index = config_order[self.episode_num % len(config_order)]
 
-        self.current_config_index = 0
-        if self.episode_num > 0:
-            self.current_config_index = self.rng.randrange(len(self.env_configs))
-        self.current_level = self.rng.randrange(0, 21)  # Randomize start level for more variety
+        # self.current_config_index = 0
+        # if self.episode_num > -1:
+        #     self.current_config_index = self.rng.randrange(len(self.env_configs))
+        self.current_config_index = self.rng.randrange(len(self.env_configs))
+        # self.current_config_index = self.rng.choice(list(range(len(self.env_configs))))
+        
+        optional_levels = self._get_optional_levels(self.current_config_index)
+        print(f"[reset] Optional levels for config {self.current_config_index}: {optional_levels}")
+        self.current_level = self.rng.choice(optional_levels) if optional_levels else 0
+        # self.current_level = self.rng.randrange(0, 21)  # Randomize start level for more variety
         
         self.env, self.current_config_index, self.current_config_name = self.create_new_env(env_seed=0, config_index=self.current_config_index, start_level=self.current_level)
         # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
@@ -479,17 +488,17 @@ class GameControl:
             'agent_index': self.agent_index
         }
 
-    def handle_action(self, action_str: str) -> Dict[str, Any]:
-        """Map keyboard input to Fruitbot actions."""
-        key_to_action = {
-            "ArrowLeft": FRUITBOT_ACTIONS['LEFT'],
-            "ArrowRight": FRUITBOT_ACTIONS['RIGHT'],
-            "ArrowUp": FRUITBOT_ACTIONS['STAY'],
-            "ArrowDown": FRUITBOT_ACTIONS['STAY'],
-            "Space": FRUITBOT_ACTIONS['THROW'],
-        }
-        action = key_to_action.get(action_str, FRUITBOT_ACTIONS['STAY'])
-        return self.step(action)
+    # def handle_action(self, action_str: str) -> Dict[str, Any]:
+    #     """Map keyboard input to Fruitbot actions."""
+    #     key_to_action = {
+    #         "ArrowLeft": FRUITBOT_ACTIONS['LEFT'],
+    #         "ArrowRight": FRUITBOT_ACTIONS['RIGHT'],
+    #         "ArrowUp": FRUITBOT_ACTIONS['STAY'],
+    #         "ArrowDown": FRUITBOT_ACTIONS['STAY'],
+    #         "Space": FRUITBOT_ACTIONS['THROW'],
+    #     }
+    #     action = key_to_action.get(action_str, FRUITBOT_ACTIONS['STAY'])
+    #     return self.step(action)
 
     # @timeit
     def get_initial_observation(self) -> Dict[str, Any]:
@@ -529,7 +538,6 @@ class GameControl:
             print(f"User {self.user_id} Episode {self.episode_num} started {'_'*100}")
             return {
                 'image': image_to_base64(frame),
-                'last_score': self.last_score,
                 'action': None,
                 'reward': 0,
                 'done': False,
@@ -544,18 +552,6 @@ class GameControl:
             import traceback
             traceback.print_exc()
             raise
-
-    # def agent_action(self) -> Dict[str, Any]:
-    #     # Get action from PPO agent
-    #     # agent_config = self.models_paths[self.agent_index]
-        
-    #     # PPO agent: predict returns (action, _states)
-    #     action, _ = self.ppo_agent.predict(self.current_obs, deterministic=True)
-    #     action = action.item() if hasattr(action, 'item') else int(action)
-        
-    #     result = self.step(action, True)
-    #     result['action'] = action
-    #     return result
 
     def revert_to_old_agent(self) -> None:
         self.ppo_agent = self.prev_agent
@@ -660,7 +656,7 @@ class GameControl:
         feedback_indexes = [feedback['index'] for feedback in user_feedback]
 
         optimal_agents = []
-        target_models_indexes = self.models_distance[self.agent_index]
+        target_models_indexes = self.models_neighbors[self.agent_index]
         print(f"\n[update_agent] Evaluating {len(target_models_indexes)} candidate agents...")
         
         # Keep track of loaded agents for cleanup
@@ -781,28 +777,30 @@ class GameControl:
             config_idx = self.current_config_index
             print(f"[agents_different_routs] Similarity level 1 - same env, seed, and level (config={config_idx}, level={self.current_level})")
         elif similarity_level == 2: # same_config different level
-            # self.env_seed_demonstration = random.choice(self.env_seed_list)
+            # self.env_seed_demonstration = self.rng.choice(self.env_seed_list)
             config_idx = self.current_config_index
             print(f"[agents_different_routs] Similarity level 2 - same config={config_idx} different level")
-            print(f"[agents_different_routs] config list= {self.models_distance[self.prev_agent_index][self.agent_index]['configs']}")
-            potential_configs_levels = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
+            print(f"[agents_different_routs] config list= {self.models_neighbors[self.prev_agent_index][self.agent_index]['configs']}")
+            potential_configs_levels = self.models_neighbors[self.prev_agent_index][self.agent_index]['configs']
             if config_idx >= len(potential_configs_levels):
-                start_level_options = list(range(100))
+                print(f"[agents_different_routs] WARNING: config_idx {config_idx} out of bounds for models_neighbors configs list, using all levels as fallback")
+                start_level_options = self._get_optional_levels(config_index=config_idx)
             else:
-                start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
+                start_level_options = self.models_neighbors[self.prev_agent_index][self.agent_index]['configs'][config_idx]
 
-        elif similarity_level == 3: # contrast - use models_distance to find best differentiating env
-            config_idx = self.models_distance[self.prev_agent_index][self.agent_index]['contrast_config']
-            potential_configs_levels = self.models_distance[self.prev_agent_index][self.agent_index]['configs']
+        elif similarity_level == 3: # contrast - use models_neighbors to find best differentiating env
+            config_idx = self.models_neighbors[self.prev_agent_index][self.agent_index]['contrast_config']
+            potential_configs_levels = self.models_neighbors[self.prev_agent_index][self.agent_index]['configs']
             if config_idx >= len(potential_configs_levels):
+                print(f"[agents_different_routs] WARNING: config_idx {config_idx} out of bounds for models_neighbors configs list, using all levels as fallback")
                 start_level_options = list(range(100))
             else:
-                start_level_options = self.models_distance[self.prev_agent_index][self.agent_index]['configs'][config_idx]
+                start_level_options = self.models_neighbors[self.prev_agent_index][self.agent_index]['configs'][config_idx]
             print(f"[agents_different_routs] Similarity level 3 - contrast config={config_idx} with levels: {start_level_options}")
 
         else: # random config and level
             config_idx = self.rng.randrange(len(self.env_configs))
-            start_level_options = list(range(100))  # Any level for random config
+            start_level_options = self._get_optional_levels(config_index=config_idx)  # Any level for random config
             print(f"[agents_different_routs] Similarity level {similarity_level} - random config={config_idx} and random level")
 
         self.demonstration_level = self.rng.choice(start_level_options)
@@ -936,6 +934,40 @@ def _lookup_user(sid: str) -> Tuple[str, Optional['GameControl']]:
         return user_id or '', None
     return user_id, game_controls[user_id]
 
+def _lookup_user_from_sid_or_payload(
+    sid: str,
+    data: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Optional['GameControl']]:
+    """Resolve a user from SID first, then fall back to payload playerName.
+
+    This helps recover when a client reconnects with a new SID and an event
+    arrives before SID mappings are fully re-established.
+    """
+    user_id, user_game = _lookup_user(sid)
+    if user_game:
+        return user_id, user_game
+
+    if not isinstance(data, dict):
+        return user_id, None
+
+    payload_user_id = str(data.get("playerName", "")).strip()
+    if not payload_user_id:
+        return user_id, None
+
+    if payload_user_id not in game_controls:
+        return payload_user_id, None
+
+    old_sid = user_to_sid.get(payload_user_id)
+    if old_sid and old_sid != sid:
+        sid_to_user.pop(old_sid, None)
+
+    sid_to_user[sid] = payload_user_id
+    user_to_sid[payload_user_id] = sid
+    game_controls[payload_user_id].update_activity()
+    print(f"[session_recovery] Re-mapped SID {sid} -> user {payload_user_id} from payload")
+
+    return payload_user_id, game_controls[payload_user_id]
+
 # Procgen Fruitbot models configuration
 
 # easy_models_dict_old = {
@@ -1037,39 +1069,46 @@ easy_models_dict = {
 
 
 # for each model index a list of optinal ather agents to switch to, with the other model index, name, and list of (env_seeds, env_config_index)
-models_distance = {
-    1: {
-        2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[6,7,43], [7, 24,34], [3, 27, 32], [ 10, 20, 30]]},
-        3: {'name': 'no_doors_fruits_only', 'contrast_config': 1, 'configs': [[3, 44, 52], [2, 30, 36], [20, 41,98], [1,2,6]]},
-        5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[13, 19, 70], [1, 35, 87], [0, 3, 5], [7, 89, 9]]},
-    },
-    2: {
-        1: {'name': 'no_doors_collect_all', 'contrast_config': 1, 'configs': [[6,7,43], [7, 24,34], [3, 27, 32], [ 10, 20, 30]]},
-        3: {'name': 'no_doors_fruits_only', 'contrast_config': 1, 'configs': [[57, 67, 72], [24, 54, 66], [47, 49, 22], [77, 55, 88]]},
-        4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[80, 36, 90], [3, 42, 55], [2, 10, 24], [49, 53, 42]]},
-    },
-    3: {
-        4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[57,64, 70],  [10, 64, 27], [0, 49, 2], [49, 11, 12]]},
-        5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[44, 3], [6, 33], [12, 17, 63], [94, 97]]},
-        6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[9, 33, 8], [77, 9, 19], [30, 41], [37, 76] ]},
-    },
-    4: {
-        1: {'name': 'no_doors_collect_all', 'contrast_config': 0, 'configs': [[29, 20, 10], [1, 2, 10], [0, 20, 53], [2, 30]]},
-        5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[10, 42, 62], [6, 53, 16], [84, 67], [4, 68, 97]]},
-        6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[12, 13, 42], [2, 7, 8], [59, 60], [50, 65, 56, 75]]},
-    },
-    5: {
-        4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[10, 42, 62], [6, 53, 16], [84, 67], [4, 68, 97]]},
-        2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[74, 80, 39], [13, 54, 80], [87, 97, 3], [7, 94, 58]]},
-        6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[44, 49, 60], [19, 66], [1, 41], [58, 19]]},
-    },
-    6: {
-        1: {'name': 'no_doors_collect_all', 'contrast_config': 3, 'configs': [[6, 13, 97], [37, 49], [2, 5, 41], [37, 40]]},
-        3: {'name': 'no_doors_fruits_only', 'contrast_config': 3, 'configs': [[9, 33], [9, 19], [30, 41], [37, 46 , 76]]},
-        4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[12, 13, 42], [2, 7, 8], [59, 60], [50, 65, 56, 75]]},
-    }
+models_neighbors = {
+  1: {
+    2: {'name': 'no_doors_junk_only', 'contrast_config': 2, 'configs': [[35, 7], [63, 2], [48, 8], [41, 91]]},
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 0, 'configs': [[51, 28], [2, 1], [48, 15], [43, 22]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [33, 30], [50, 41]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[51, 16], [2, 96], [30, 79], [53, 74]]}
+  },
+  2: {
+    1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[35, 7], [63, 2], [48, 8], [41, 91]]},
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 2, 'configs': [[25, 44], [2, 63], [38, 43], [41, 66]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[46, 65], [2, 34], [58, 9], [87, 41]]}
+  },
+  3: {
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[44, 69], [64, 34], [43, 45], [66, 9]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[74, 54], [43, 79], [38, 57], [18, 15]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [23, 18]]}
+  },
+  4: {
+    1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [33, 30], [50, 41]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[69, 51], [43, 66], [5, 47], [78, 71]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 2, 'configs': [[67, 51], [64, 32], [42, 89], [85, 78]]}
+  },
+  5: {
+    2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[46, 74], [63, 2], [47, 29], [41, 87]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[69, 51], [43, 66], [5, 47], [78, 71]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 1, 'configs': [[49, 2], [32, 43], [22, 31], [80, 5]]}
+  },
+  6: {
+    1: {'name': 'no_doors_collect_all', 'contrast_config': 3, 'configs': [[51, 59], [79, 39], [30, 79], [53, 46]]},
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [23, 18]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[67, 51], [64, 32], [42, 89], [85, 78]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 1, 'configs': [[49, 2], [32, 43], [22, 31], [80, 5]]}
+  }
 }
 
+levels_with_low_success = {0: [], 
+                           1: [7, 11, 17, 18, 58, 70, 84], 
+                           2: [1, 3, 6, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21, 23, 24, 25, 28, 32, 34, 35, 36, 37, 39, 40, 46, 54, 55, 60, 61, 62, 63, 64, 67, 68, 69, 70, 71, 72, 75, 76, 77, 83, 84, 85, 86, 88, 90, 92, 94, 98], 
+                           3: [0, 1, 3, 6, 10, 11, 13, 14, 20, 21, 25, 28, 29, 32, 35, 37, 39, 42, 49, 54, 56, 58, 60, 61, 64, 67, 68, 69, 70, 72, 73, 83, 84, 86, 89, 90, 92, 93, 95, 98]
+                           }
 
 # Action mappings for Fruitbot
 actions_dict = {
@@ -1196,7 +1235,8 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
             try:
                 new_game = GameControl(
                     easy_models_dict,
-                    models_distance,
+                    models_neighbors,
+                    levels_with_low_success,
                     user_id,
                     similar_level_env=similarity_level,
                     feedback_partial_view=True,
@@ -1256,32 +1296,32 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
         except Exception as emit_error:
             print(f"[start_game] Failed to send error to client: {emit_error}")
 
-@sio.on("send_action")
-async def handle_send_action(sid: str, action: str) -> Dict[str, str]:
-    """
-    Handle a user action. Look up the GameControl instance using the sid mapping.
-    """
-    user_id, user_game = _lookup_user(sid)
-    if not user_game:
-        await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
-        return
+# @sio.on("send_action")
+# async def handle_send_action(sid: str, action: str) -> Dict[str, str]:
+#     """
+#     Handle a user action. Look up the GameControl instance using the sid mapping.
+#     """
+#     user_id, user_game = _lookup_user(sid)
+#     if not user_game:
+#         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+#         return
 
-    async with _get_user_lock(user_id):
-        if user_id not in game_controls:
-            await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
-            return
-        user_game = game_controls[user_id]
-        user_game.update_activity()
-        response = user_game.handle_action(action)
-        response["action"] = action_dir.get(action, "Unknown")
+#     async with _get_user_lock(user_id):
+#         if user_id not in game_controls:
+#             await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
+#             return
+#         user_game = game_controls[user_id]
+#         user_game.update_activity()
+#         response = user_game.handle_action(action)
+#         response["action"] = action_dir.get(action, "Unknown")
 
-    await sio.emit("game_update", response, to=sid)
-    return {"status": "success"}
+#     await sio.emit("game_update", response, to=sid)
+#     return {"status": "success"}
 
 @sio.on("next_episode")
 async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
     # Accept optional data to match Socket.IO which may pass a payload (even if empty)
-    user_id, user_game = _lookup_user(sid)
+    user_id, user_game = _lookup_user_from_sid_or_payload(sid, data)
     if not user_game:
         print(f"[next_episode] User not found for SID {sid}, ignoring")
         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
@@ -1351,7 +1391,7 @@ async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
 @sio.on("play_entire_episode")
 async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
     """Run the agent for a complete episode and stream frames in batches."""
-    user_id, user_game = _lookup_user(sid)
+    user_id, user_game = _lookup_user_from_sid_or_payload(sid, data)
     if not user_game:
         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
@@ -1446,7 +1486,7 @@ async def compare_agents(sid: str, data: Dict[str, Any]) -> None: # data={ playe
     print(f"[compare_agents] User feedback count: {len(data.get('userFeedback', []))}")
     print(f"{'='*80}\n")
     
-    user_id, user_game = _lookup_user(sid)
+    user_id, user_game = _lookup_user_from_sid_or_payload(sid, data)
     if not user_game:
         print(f"[compare_agents] ERROR: User not found - SID: {sid}, User ID: {user_id}")
         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
@@ -1537,7 +1577,7 @@ async def start_cover_page(sid: str) -> None:
 @sio.on("agent_update_rating")
 async def agent_update_rating(sid: str, data: Dict[str, Any]) -> None:
     """Handle rating submission for similarity_level=0 agent updates."""
-    user_id, user_game = _lookup_user(sid)
+    user_id, user_game = _lookup_user_from_sid_or_payload(sid, data)
     if not user_game:
         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
@@ -1585,7 +1625,7 @@ async def agent_update_rating(sid: str, data: Dict[str, Any]) -> None:
 
 @sio.on("agent_select")
 async def agent_select(sid: str, data: Dict[str, Any]) -> None:
-    user_id, user_game = _lookup_user(sid)
+    user_id, user_game = _lookup_user_from_sid_or_payload(sid, data)
     if not user_game:
         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
         return
