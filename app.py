@@ -240,7 +240,6 @@ class GameControl:
         self.feedback_partial_view: bool = feedback_partial_view
         self.feedback_score: int = 0 # the number of good feedbacks the user gave
         self.number_of_feedbacks: int = 0 # total number of feedbacks the user gave
-        self.past_choices: set = set()  # To avoid repeating the same choice
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
         self.env_seed_used: list = []  # List of used environments
@@ -849,7 +848,7 @@ class GameControl:
         import gc
         gc.collect()
 
-        self.past_choices.add((self.models_paths[self.prev_agent_index]['name'], self.models_paths[self.agent_index]['name']))
+        # self.past_choices.add((self.models_paths[self.prev_agent_index]['name'], self.models_paths[self.agent_index]['name']))
         
         # Send images at original size without resizing
         image_updated_base64 = image_to_base64(img_updated, resize=None)
@@ -878,6 +877,10 @@ class GameControl:
             print("[save_user_choice] Database saving is disabled.")
             return
         try:
+            print(f"\n{'='*80}")
+            print(f"[save_user_choice] Saving user choice to database...")
+            print(f" demonstration_config: {self.demonstration_env_config}, demonstration_level: {self.demonstration_level}, (feedback)current_level: {self.current_level}")
+            print(f"\n{'='*80}")
             session = SessionLocal()
             user_choice_entry = UserChoice(
                 user_id=self.user_id,
@@ -1073,36 +1076,30 @@ models_neighbors = {
   1: {
     2: {'name': 'no_doors_junk_only', 'contrast_config': 2, 'configs': [[35, 7], [63, 2], [48, 8], [41, 91]]},
     3: {'name': 'no_doors_fruits_only', 'contrast_config': 0, 'configs': [[51, 28], [2, 1], [48, 15], [43, 22]]},
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [33, 30], [50, 41]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [97, 30], [50, 67]]},
     5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[51, 16], [2, 96], [30, 79], [53, 74]]}
-  },
-  2: {
+  },  2: {
     1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[35, 7], [63, 2], [48, 8], [41, 91]]},
-    3: {'name': 'no_doors_fruits_only', 'contrast_config': 2, 'configs': [[25, 44], [2, 63], [38, 43], [41, 66]]},
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 2, 'configs': [[25, 44], [2, 63], [48, 93], [41, 66]]},
     4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[46, 65], [2, 34], [58, 9], [87, 41]]}
-  },
-  3: {
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[44, 69], [64, 34], [43, 45], [66, 9]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[74, 54], [43, 79], [38, 57], [18, 15]]},
-    6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [23, 18]]}
-  },
-  4: {
-    1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [33, 30], [50, 41]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[69, 51], [43, 66], [5, 47], [78, 71]]},
-    6: {'name': 'open_doors_fruits_only', 'contrast_config': 2, 'configs': [[67, 51], [64, 32], [42, 89], [85, 78]]}
-  },
-  5: {
+  },  3: {
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[44, 69], [75, 34], [9, 31], [34, 79]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[74, 54], [16, 79], [99, 57], [18, 15]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [28, 18]]}
+  },  4: {
+    1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [97, 30], [50, 67]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[69, 51], [67, 66], [41, 47], [78, 71]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 2, 'configs': [[67, 51], [64, 76], [22, 43], [85, 78]]}
+  },  5: {
     2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[46, 74], [63, 2], [47, 29], [41, 87]]},
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[69, 51], [43, 66], [5, 47], [78, 71]]},
-    6: {'name': 'open_doors_fruits_only', 'contrast_config': 1, 'configs': [[49, 2], [32, 43], [22, 31], [80, 5]]}
-  },
-  6: {
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[69, 51], [67, 66], [41, 47], [78, 71]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 1, 'configs': [[49, 2], [76, 43], [22, 31], [66, 57]]}
+  },  6: {
     1: {'name': 'no_doors_collect_all', 'contrast_config': 3, 'configs': [[51, 59], [79, 39], [30, 79], [53, 46]]},
-    3: {'name': 'no_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [23, 18]]},
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[67, 51], [64, 32], [42, 89], [85, 78]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 1, 'configs': [[49, 2], [32, 43], [22, 31], [80, 5]]}
-  }
-}
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [28, 18]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[67, 51], [64, 76], [22, 43], [85, 78]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[49, 2], [31], [22, 31], [66, 57]]}
+  }}  
 
 levels_with_low_success = {0: [], 
                            1: [7, 11, 17, 18, 58, 70, 84], 
@@ -1659,7 +1656,7 @@ async def agent_select(sid: str, data: Dict[str, Any]) -> None:
             print(f"[agent_select] WARNING: No demonstration_time provided, using current time: {demonstration_time_fmt}")
 
         if save_to_db:
-            agent_rating = data.get('agent_rating', None)
+            agent_rating = data.get('agent_rating', -1)
             user_game.save_user_choice(data['use_updated'], data.get('choiceExplanation', ''), demonstration_time_fmt, agent_rating=agent_rating)
         
         if data['use_updated'] == False:
