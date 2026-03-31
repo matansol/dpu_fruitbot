@@ -973,83 +973,6 @@ def _lookup_user_from_sid_or_payload(
 
 # Procgen Fruitbot models configuration
 
-# easy_models_dict_old = {
-#     # Behavior 1: 
-#     1: {'path': "models/fruitbot/20251223-133810_easy/ppo_final.zip", 'index': 1, 'name': 'avoid_walls_random_food'},
-    
-#     # Behavior 2: don't open doors and collect all food
-#     2: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 2, 'name': 'no_doors_collect_all'},
-    
-#     # Behavior 3: don't open doors and collect only fruits
-#     3: {'path': "models/fruitbot/20260117-134142_easy/ppo_final.zip", 'index': 3, 'name': 'no_doors_fruits_only'},
-    
-#     # Behavior 4: collect only fruits and open doors
-#     4: {'path': "models/fruitbot/20251231-174002_easy/ppo_final.zip", 'index': 4, 'name': 'open_doors_fruits_only'},
-    
-#     # Behavior 5: open some doors and collect all foods
-#     5: {'path': "models/fruitbot/20260121-152950_easy/ppo_final.zip", 'index': 5, 'name': 'open_doors_collect_all'},
-    
-#     # Behavior 6: open doors and avoid all foods  
-#     6: {'path': "models/fruitbot/20260103-073446_easy/ppo_final.zip", 'index': 6, 'name': 'open_doors_avoid_food'},
-    
-#     # Behavior 7: try to open doors and collect only fruits
-#     7: {'path': "models/fruitbot/20260105-075949_easy/ppo_final.zip", 'index': 7, 'name': 'only_fruits_tries_open_doors'},
-
-#     # Behavior 8: do not open doors and collect only junk
-#     8: {"path": "models/fruitbot/20260116-210051_easy/ppo_final.zip", 'index': 8, 'name': 'no_doors_junk_only'},
-# }
-
-# models_distance_old = {
-#     1: {
-#         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#         8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#     },
-#     2: {
-#         8: {'name': 'no_doors_junk_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#     },
-#     3: {
-#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
-#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#     },
-#     4: {
-#         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
-#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1020, 1026], [1000, 1018, 1019]]},
-#     },
-#     5: {
-#         4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         7: {'name': 'only_fruits_tries_open_doors', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
-#     },
-#     6: {
-#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#         1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019], [1018, 1019, 1023]]},
-#     },
-#     7: {
-#         4: {'name': 'open_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         2: {'name': 'no_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026, 1028], [1000, 1018, 1019]]},
-#     },
-#     8: {
-#         1: {'name': 'avoid_walls_random_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#         6: {'name': 'open_doors_avoid_food', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1000, 1011, 1018], [1019, 1026], [1000, 1018, 1019]]},
-#         5: {'name': 'open_doors_collect_all', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1015], [1011, 1018, 1019], [1019, 1028], [1018, 1019, 1023]]},
-#         3: {'name': 'no_doors_fruits_only', 'configs': [[1009, 1006, 1028], [1024, 1012, 1008], [1017, 1024, 1008], [1010, 1048, 1013], [1028, 1046, 1035], [1004, 1011, 1026], [1018, 1011, 1026], [1026, 1045, 1028], [1018, 1026, 1019]]},
-#     }
-#     }
-
 easy_models_dict = {
     # Behavior 1: don't open doors and collect all food
     1: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 1, 'name': 'no_doors_collect_all'},
@@ -1075,30 +998,30 @@ easy_models_dict = {
 models_neighbors = {
   1: {
     2: {'name': 'no_doors_junk_only', 'contrast_config': 2, 'configs': [[35, 7], [63, 2], [48, 8], [41, 91]]},
-    3: {'name': 'no_doors_fruits_only', 'contrast_config': 0, 'configs': [[51, 28], [2, 1], [48, 15], [43, 22]]},
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [97, 30], [50, 67]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[51, 16], [2, 96], [30, 79], [53, 74]]}
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 0, 'configs': [[51, 28], [2, 1], [28, 57], [43, 22]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [97, 43], [50, 67]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[51, 16], [2, 96], [80, 55], [53, 74]]}
   },  2: {
     1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[35, 7], [63, 2], [48, 8], [41, 91]]},
-    3: {'name': 'no_doors_fruits_only', 'contrast_config': 2, 'configs': [[25, 44], [2, 63], [48, 93], [41, 66]]},
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 0, 'configs': [[25, 44], [2, 63], [48, 93], [41, 66]]},
     4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[46, 65], [2, 34], [58, 9], [87, 41]]}
   },  3: {
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 1, 'configs': [[44, 69], [75, 34], [9, 31], [34, 79]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 0, 'configs': [[44, 69], [75, 34], [9, 31], [34, 79]]},
     5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[74, 54], [16, 79], [99, 57], [18, 15]]},
     6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [28, 18]]}
   },  4: {
-    1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [97, 30], [50, 67]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[69, 51], [67, 66], [41, 47], [78, 71]]},
-    6: {'name': 'open_doors_fruits_only', 'contrast_config': 2, 'configs': [[67, 51], [64, 76], [22, 43], [85, 78]]}
+    1: {'name': 'no_doors_collect_all', 'contrast_config': 2, 'configs': [[43, 16], [47, 79], [97, 43], [50, 67]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[69, 51], [67, 66], [41, 47], [78, 4]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 2, 'configs': [[67, 51], [64, 76], [22, 43], [85, 96]]}
   },  5: {
     2: {'name': 'no_doors_junk_only', 'contrast_config': 1, 'configs': [[46, 74], [63, 2], [47, 29], [41, 87]]},
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 3, 'configs': [[69, 51], [67, 66], [41, 47], [78, 71]]},
-    6: {'name': 'open_doors_fruits_only', 'contrast_config': 1, 'configs': [[49, 2], [76, 43], [22, 31], [66, 57]]}
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 0, 'configs': [[69, 51], [67, 66], [41, 47], [78, 71]]},
+    6: {'name': 'open_doors_fruits_only', 'contrast_config': 3, 'configs': [[49, 2], [76, 43], [22, 31], [96, 30]]}
   },  6: {
-    1: {'name': 'no_doors_collect_all', 'contrast_config': 3, 'configs': [[51, 59], [79, 39], [30, 79], [53, 46]]},
-    3: {'name': 'no_doors_fruits_only', 'contrast_config': 3, 'configs': [[74, 39], [1, 94], [97, 43], [28, 18]]},
-    4: {'name': 'open_doors_avoid_food', 'contrast_config': 2, 'configs': [[67, 51], [64, 76], [22, 43], [85, 78]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[49, 2], [31], [22, 31], [66, 57]]}
+    1: {'name': 'no_doors_collect_all', 'contrast_config': 1, 'configs': [[51, 59], [47, 91], [30, 79], [53, 46]]},
+    3: {'name': 'no_doors_fruits_only', 'contrast_config': 2, 'configs': [[74, 39], [1, 94], [13, 51], [28, 18]]},
+    4: {'name': 'open_doors_avoid_food', 'contrast_config': 0, 'configs': [[67, 51], [64, 76], [22, 43], [85, 96]]},
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[49, 2], [31], [22, 31], [96, 30]]}
   }}  
 
 levels_with_low_success = {0: [], 
