@@ -79,7 +79,6 @@ saved_models/
 runs/
 outputs/
 results/
-experiments/
 training_logs/
 
 # Jupyter Notebooks

@@ -17,23 +17,24 @@ load_dotenv()
 DATABASE_URI = os.getenv("AZURE_DATABASE_URI", "sqlite:///test.db")
 
 # Pairs to remove from user_choices table.
-CHOICES_TO_REMOVE = [
-    ("69b04ae112b55b3a183c8ea9", 2),
-    ("698c054ad44c45a1061327b9", 3),
-    ("698c054ad44c45a1061327b9", 5),
-    ("673f6ffebce20832346325de", 1),
-    ("69ac96e9cf57af07fdd54227", 4),
-    ("5805db219ff6120001a135a2", 1),
-    ("69832ecb3693ee29d4fcc3c6", 2),
-    ("6765ef2feed02bfb60182ecb", 4),
-    ("69c429803583836ef035bd0d", 1),
-    ("66b1375b72c3a0f57828dcca", 3),
-    ("6913b066f2c9da9a92afc734", 3),
-    ("69ac9523ad63eebc23c358ec", 4),
-    ("65313bdcb9fd825a8c1d4981", 4),
-    ("678b6eba161e3e871bbafef5", 3),
-    ('6651e7f3cec5c25f42720bfa', 1)
-]
+CHOICES_TO_REMOVE = [('6765ef2feed02bfb60182ecb', 5), ('6647b26b402c0a3c5ab8b0cd', 5), ('6997c685f1620184f65cb8e9', 5)]
+        # [
+#     ("69b04ae112b55b3a183c8ea9", 2),
+#     ("698c054ad44c45a1061327b9", 3),
+#     ("698c054ad44c45a1061327b9", 5),
+#     ("673f6ffebce20832346325de", 1),
+#     ("69ac96e9cf57af07fdd54227", 4),
+#     ("5805db219ff6120001a135a2", 1),
+#     ("69832ecb3693ee29d4fcc3c6", 2),
+#     ("6765ef2feed02bfb60182ecb", 4),
+#     ("69c429803583836ef035bd0d", 1),
+#     ("66b1375b72c3a0f57828dcca", 3),
+#     ("6913b066f2c9da9a92afc734", 3),
+#     ("69ac9523ad63eebc23c358ec", 4),
+#     ("65313bdcb9fd825a8c1d4981", 4),
+#     ("678b6eba161e3e871bbafef5", 3),
+#     ('6651e7f3cec5c25f42720bfa', 1)
+# ]
 
 
 def parse_args() -> argparse.Namespace:
