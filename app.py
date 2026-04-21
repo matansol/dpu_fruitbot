@@ -211,21 +211,17 @@ async def in_thread(func: callable, *args, **kw) -> Any:
 class GameControl:
     def __init__(
         self,
-        models_paths: Dict[int, Dict[str, Any]],
+        models_dict: Dict[int, Dict[str, Any]],
         models_neighbors: Dict[int, Dict[int, Dict[str, Any]]], # {base_agent_idx: {next_agent_idx: {'name': str, 'configs': [[seed1, seed2, seed3], ...]}}}
                                                                  # configs[i] contains top 3 differentiating seeds for env config index i
-        levels_with_low_success: Dict[int, List[int]], # {config_index: [level1, level2, ...]} - levels with low success rates for each config index, used to prioritize demonstration levels
         user_id: str,
         similar_level_env: int = 0,
         feedback_partial_view: bool = True,
     ) -> None:
         self.agent_index = 1
-        self.models_paths = models_paths
+        self.models_dict = models_dict
         self.models_neighbors = models_neighbors
-        self.levels_with_low_seccses = levels_with_low_success
         self.episode_num = 0
-        self.scores_lst = []
-        self.last_obs = None
         self.episode_actions = []
         self.episode_frames = []
         self.episode_obs = []
@@ -242,7 +238,6 @@ class GameControl:
         self.number_of_feedbacks: int = 0 # total number of feedbacks the user gave
         self.step_count: int = 0  # Track step count within episode
         self.env_seed_demonstration: int = 0  # Seed for demonstration environment
-        self.env_seed_used: list = []  # List of used environments
         self.current_config_index: int = 0
         self.last_activity: float = time.time()  # Track last activity for cleanup
         self.game_finished: bool = False  # Track if game is finished
@@ -250,8 +245,6 @@ class GameControl:
         self.demonstration_env_config: int = -1  # Track the env config index used for demonstration (if any)
         self.rng = random.SystemRandom()  # OS-backed RNG, isolated from global random.seed()
         self.update_agent(None, None)
-        # Use centralized environment configurations from dpu_clf
-        # This ensures consistency with evaluate_comprehensive.py
         self.env_configs = get_app_env_configs()
     
     def clear_episode_data(self) -> None:
@@ -301,8 +294,7 @@ class GameControl:
 
     def _get_optional_levels(self, config_index: int) -> List[int]:
         """Get list of optional levels for a given config index, excluding those with low success."""
-        skip_levels = self.levels_with_low_seccses.get(config_index, [])
-        optional_levels = [l for l in range(100) if l not in skip_levels]
+        optional_levels = [l for l in range(100)]
         return optional_levels
     
     def create_new_env(
@@ -362,19 +354,10 @@ class GameControl:
  
  # ALL_ENV_OPTIONS = ["NO_WALLS", "WALLS_FODD", "WALLS_FRUIT" ,"WALLS_DOORS"]
 
-        # config_order = [0, 1, 3, 1, 3]
-        # self.current_config_index = config_order[self.episode_num % len(config_order)]
-
-        # self.current_config_index = 0
-        # if self.episode_num > -1:
-        #     self.current_config_index = self.rng.randrange(len(self.env_configs))
-        self.current_config_index = self.rng.randrange(len(self.env_configs))
-        # self.current_config_index = self.rng.choice(list(range(len(self.env_configs))))
-        
+        self.current_config_index = self.rng.randrange(len(self.env_configs))        
         optional_levels = self._get_optional_levels(self.current_config_index)
         print(f"[reset] Optional levels for config {self.current_config_index}: {optional_levels}")
         self.current_level = self.rng.choice(optional_levels) if optional_levels else 0
-        # self.current_level = self.rng.randrange(0, 21)  # Randomize start level for more variety
         
         self.env, self.current_config_index, self.current_config_name = self.create_new_env(env_seed=0, config_index=self.current_config_index, start_level=self.current_level)
         # self.env, self.current_config_index, self.current_config_name = self.create_structured_line_env(env_seed=self.env_seed)
@@ -394,7 +377,6 @@ class GameControl:
         self.demonstration_level: int = -1  
         self.demonstration_env_config: int = -1
         self.feedback_correctness = 0  
-        # self.saved_env = copy.deepcopy(self.env)
         
         self.step_count = 0  # Reset step count
         self.score = 0        
@@ -413,7 +395,6 @@ class GameControl:
         self.score = float(round(self.score, 1))
         if done:
             self.episode_actions.append(int(action))
-            self.scores_lst.append(self.score)
             return {
                 'image': image_to_base64(self.episode_frames[-1]) if self.episode_frames else None,
                 'episode': self.episode_num,
@@ -487,17 +468,6 @@ class GameControl:
             'agent_index': self.agent_index
         }
 
-    # def handle_action(self, action_str: str) -> Dict[str, Any]:
-    #     """Map keyboard input to Fruitbot actions."""
-    #     key_to_action = {
-    #         "ArrowLeft": FRUITBOT_ACTIONS['LEFT'],
-    #         "ArrowRight": FRUITBOT_ACTIONS['RIGHT'],
-    #         "ArrowUp": FRUITBOT_ACTIONS['STAY'],
-    #         "ArrowDown": FRUITBOT_ACTIONS['STAY'],
-    #         "Space": FRUITBOT_ACTIONS['THROW'],
-    #     }
-    #     action = key_to_action.get(action_str, FRUITBOT_ACTIONS['STAY'])
-    #     return self.step(action)
 
     # @timeit
     def get_initial_observation(self) -> Dict[str, Any]:
@@ -807,7 +777,6 @@ class GameControl:
         print("="*60)
         print(f"[agents_different_routs] Selected start_level={self.demonstration_level} from options: {start_level_options}, config index: {config_idx}")
         print("="*60)
-        self.env_seed_used.append(self.env_seed_demonstration)
                 
         env1, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=self.demonstration_level)
         env2, _, config_name = self.create_new_env(self.env_seed_demonstration, config_index=config_idx, start_level=self.demonstration_level)
@@ -973,7 +942,7 @@ def _lookup_user_from_sid_or_payload(
 
 # Procgen Fruitbot models configuration
 
-easy_models_dict = {
+models_dict = {
     # Behavior 1: don't open doors and collect all food
     1: {'path': 'models/fruitbot/20260116-074523_easy/ppo_final.zip', 'index': 1, 'name': 'no_doors_collect_all'},
 
@@ -1021,14 +990,8 @@ models_neighbors = {
     1: {'name': 'no_doors_collect_all', 'contrast_config': 1, 'configs': [[51, 59], [47, 91], [30, 79], [53, 46]]},
     3: {'name': 'no_doors_fruits_only', 'contrast_config': 2, 'configs': [[74, 39], [1, 94], [13, 51], [28, 18]]},
     4: {'name': 'open_doors_avoid_food', 'contrast_config': 0, 'configs': [[67, 51], [64, 76], [22, 43], [85, 96]]},
-    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[49, 2], [31], [22, 31], [96, 30]]}
+    5: {'name': 'mostly_fruits_open_doors', 'contrast_config': 3, 'configs': [[49, 2], [76, 43], [22, 31], [96, 30]]}
   }}  
-
-levels_with_low_success = {0: [], 
-                           1: [7, 11, 17, 18, 58, 70, 84], 
-                           2: [1, 3, 6, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21, 23, 24, 25, 28, 32, 34, 35, 36, 37, 39, 40, 46, 54, 55, 60, 61, 62, 63, 64, 67, 68, 69, 70, 71, 72, 75, 76, 77, 83, 84, 85, 86, 88, 90, 92, 94, 98], 
-                           3: [0, 1, 3, 6, 10, 11, 13, 14, 20, 21, 25, 28, 29, 32, 35, 37, 39, 42, 49, 54, 56, 58, 60, 61, 64, 67, 68, 69, 70, 72, 73, 83, 84, 86, 89, 90, 92, 93, 95, 98]
-                           }
 
 # Action mappings for Fruitbot
 actions_dict = {
@@ -1154,9 +1117,8 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
 
             try:
                 new_game = GameControl(
-                    easy_models_dict,
+                    models_dict,
                     models_neighbors,
-                    levels_with_low_success,
                     user_id,
                     similar_level_env=similarity_level,
                     feedback_partial_view=True,
@@ -1215,28 +1177,6 @@ async def start_game(sid: str, data: Dict[str, Any], callback: Optional[callable
             }, to=sid)
         except Exception as emit_error:
             print(f"[start_game] Failed to send error to client: {emit_error}")
-
-# @sio.on("send_action")
-# async def handle_send_action(sid: str, action: str) -> Dict[str, str]:
-#     """
-#     Handle a user action. Look up the GameControl instance using the sid mapping.
-#     """
-#     user_id, user_game = _lookup_user(sid)
-#     if not user_game:
-#         await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
-#         return
-
-#     async with _get_user_lock(user_id):
-#         if user_id not in game_controls:
-#             await sio.emit("error", {"error": "User not found", "code": "SESSION_EXPIRED"}, to=sid)
-#             return
-#         user_game = game_controls[user_id]
-#         user_game.update_activity()
-#         response = user_game.handle_action(action)
-#         response["action"] = action_dir.get(action, "Unknown")
-
-#     await sio.emit("game_update", response, to=sid)
-#     return {"status": "success"}
 
 @sio.on("next_episode")
 async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
@@ -1297,17 +1237,6 @@ async def next_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
 
     await sio.emit("game_update", response, to=sid)
 
-# @sio.on("ppo_action")
-# async def ppo_action(sid: str) -> None:
-#     user_id = sid_to_user.get(sid)
-#     if not user_id or user_id not in game_controls:
-#         await sio.emit("error", {"error": "User not found"}, to=sid)
-#         return
-#     user_game = game_controls[user_id]
-#     user_game.update_activity()  # Track activity
-#     response = user_game.agent_action()
-#     await finish_turn(response, user_game, sid)
-
 @sio.on("play_entire_episode")
 async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -> None:
     """Run the agent for a complete episode and stream frames in batches."""
@@ -1347,34 +1276,6 @@ async def play_entire_episode(sid: str, data: Optional[Dict[str, Any]] = None) -
         episode_rewards.append(float(result['reward']))
         total_score = result['score']
         step_count = result['step_count']
-        
-        # For other actions (1=UP/NOOP, 3=THROW), position stays same
-        # if not done:
-            # episode_positions.append(cx)
-        
-        # # Stream batch every BATCH_SIZE steps
-        # if len(episode_images) - batch_start_index >= BATCH_SIZE or done:
-        #     if len(user_game.episode_frames) > 0:
-        #         time_b = time.time()
-        #         episode_positions = [dpu_clf.find_x_on_row(frame) + 15 for frame in user_game.episode_frames[batch_start_index:]]
-        #         time_a = time.time()
-        #         print(f"[play_entire_episode] Precomputed positions for {len(user_game.episode_frames[batch_start_index:])} frames in {time_a - time_b:.4f} seconds")
-        #         print(f"[play_entire_episode] positions: {episode_positions}")
-        #         print(f"actions batch: {episode_actions[batch_start_index:]}")
-
-        #     batch_data = {
-        #         'images': episode_images[batch_start_index:],
-        #         'actions': episode_actions[batch_start_index:],
-        #         'rewards': episode_rewards[batch_start_index:],
-        #         'positions': episode_positions[batch_start_index:],
-        #         'collisions': {}, #user_game.collision_positions,  # Add collision data
-        #         'score': float(total_score),  # Ensure native Python float
-        #         'steps': int(step_count),      # Ensure native Python int
-        #         'is_final': bool(done),        # Convert numpy bool_ to Python bool
-        #         'batch_start': int(batch_start_index)
-        #     }
-        #     await sio.emit("episode_batch", batch_data, to=sid)
-        #     batch_start_index = len(episode_images)
     
     if len(user_game.episode_frames) > 0:
         episode_positions = [dpu_clf.find_x_on_row(frame) + 15 for frame in user_game.episode_frames]
@@ -1531,7 +1432,7 @@ async def agent_update_rating(sid: str, data: Dict[str, Any]) -> None:
 
         # For similarity_level=0, user chose to keep the updated agent (use_updated=True)
         if save_to_db:
-            agent_rating = data.get('agent_rating', None)
+            agent_rating = data.get('agent_rating', -1)
             print(f"[agent_update_rating] Saving rating {agent_rating} for user {user_id}, episode {user_game.episode_num}")
             user_game.save_user_choice(
                 user_choice=True,  # Always True for similarity_level=0 (kept updated agent)

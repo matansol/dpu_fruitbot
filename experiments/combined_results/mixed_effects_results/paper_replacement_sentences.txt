@@ -1,0 +1,8 @@
+In MiniGrid, Same did not differ from Salient-Contrast on negative updates (OR = 1.01, 95% CI [0.58, 1.75], p = 0.490).
+In MiniGrid, Same exceeded Salient-Contrast on positive updates (OR = 2.63, 95% CI [1.54, 4.50], p = 0.000).
+In MiniGrid, Salient-Contrast exceeded Same on negative updates (OR = 3.71, 95% CI [2.29, 6.00], p = 0.000).
+In MiniGrid, Salient-Contrast did not differ from Same on positive updates (OR = 1.21, 95% CI [0.74, 2.00], p = 0.224).
+In FruitBot, Same exceeded Salient-Contrast on negative updates (OR = 2.92, 95% CI [1.72, 4.97], p = 0.000).
+In FruitBot, Same exceeded Salient-Contrast on positive updates (OR = 2.89, 95% CI [1.57, 5.30], p = 0.000).
+In FruitBot, Salient-Contrast exceeded Same on negative updates (OR = 2.41, 95% CI [1.47, 3.96], p = 0.000).
+In FruitBot, Salient-Contrast exceeded Same on positive updates (OR = 3.38, 95% CI [2.24, 5.09], p = 0.000).
