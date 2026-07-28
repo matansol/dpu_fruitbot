@@ -525,7 +525,7 @@ class GameControl:
     def revert_to_old_agent(self) -> None:
         self.ppo_agent = self.prev_agent
         self.agent_index = self.prev_agent_index
-        self.current_agent_path = self.models_paths[self.agent_index]['path']
+        self.current_agent_path = self.models_dict[self.agent_index]['path']
         print(f'(revert) prev agent index={self.prev_agent_index}, prev agent path={self.prev_agent_path}')
         print(f"(revert) current agent index={self.agent_index}")
 
@@ -559,7 +559,7 @@ class GameControl:
         print(f"[update_agent] observations stored: {len(self.episode_obs)}")
         
         if self.ppo_agent is None:
-            agent_config = self.models_paths[self.agent_index]
+            agent_config = self.models_dict[self.agent_index]
             self.ppo_agent = load_agent(agent_config['path'])
             self.current_agent_path = agent_config['path']
             self.prev_agent = self.ppo_agent
@@ -633,7 +633,7 @@ class GameControl:
         
         for model_i, agent_info in target_models_indexes.items():
             model_name = agent_info['name']
-            agent_data = self.models_paths[model_i]
+            agent_data = self.models_dict[model_i]
             path = agent_data['path']
             agent = load_agent(path)
             loaded_agents.append(agent)
@@ -693,7 +693,7 @@ class GameControl:
         new_agent_dict = reduce(agent_cmp, optimal_agents)
         
         print(f"\n[update_agent] AGENT SELECTION:")
-        print(f"  Current agent: {self.agent_index} - {self.models_paths[self.agent_index]['name']}")
+        print(f"  Current agent: {self.agent_index} - {self.models_dict[self.agent_index]['name']}")
         print(f"  Selected agent: {new_agent_dict['model_index']} - {new_agent_dict['name']}")
         print(f"  Correctness: {new_agent_dict['correctness_feedback']}")
         
@@ -702,7 +702,7 @@ class GameControl:
         self.prev_agent_index = self.agent_index
         self.ppo_agent = new_agent_dict["agent"]
         self.agent_index = new_agent_dict["model_index"]
-        self.current_agent_path = self.models_paths[self.agent_index]['path']
+        self.current_agent_path = self.models_dict[self.agent_index]['path']
         
         # Clean up unused agents to free memory
         selected_agent = self.ppo_agent
@@ -817,7 +817,6 @@ class GameControl:
         import gc
         gc.collect()
 
-        # self.past_choices.add((self.models_paths[self.prev_agent_index]['name'], self.models_paths[self.agent_index]['name']))
         
         # Send images at original size without resizing
         image_updated_base64 = image_to_base64(img_updated, resize=None)

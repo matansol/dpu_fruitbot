@@ -1,8 +1,8 @@
 # Assessment-Loop Paper Data
 
 ## Overview
-This folder contains the compact participant-level and trial-level datasets used for the figures and statistical analyses in the Assessment-Loop paper submission.
-The notebook Assessment-Loop plots.ipynb loads these CSV files, generates the paper plots, and runs nonparametric and mixed-effects analyses.
+This folder contains the participant-level and trial-level datasets used for the figures and statistical analyses in the Assessment Policy Update paper submission.
+The notebook Assessment-Loop plots.ipynb loads these CSV files, generates the paper plots, and runs the statistical analysist.
 
 ## Files
 - user_results_compact.csv: One row per participant with demographics, aggregated performance metrics, and post-study questionnaire responses.
@@ -17,7 +17,6 @@ The notebook Assessment-Loop plots.ipynb loads these CSV files, generates the pa
 ## Plot/Analysis Coverage in Assessment-Loop plots.ipynb
 - Correct choice by environment and group (local and generalized criteria).
 - Correct choice by policy update direction (negative vs positive) for Same vs Salient-Contrast groups.
-- Mixed-effects logistic models for local and generalized correctness with participant random intercepts.
 - Explanation satisfaction item plots and internal consistency (Cronbach alpha).
 - Choice-time comparisons by environment and group.
 - Final-agent analyses (count by rank, final agent score, and user evaluation of final agent).
