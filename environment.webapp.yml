@@ -1,0 +1,58 @@
+name: procgen_light
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Build/runtime base for procgen on Windows
+  - python=3.8
+  - pip=23.3.1
+  - setuptools=65.5.0
+  - wheel=0.38.4
+  - c-compiler=1.3.0
+  - cmake=3.21.3
+  - qt=5.12.5
+  - mpi4py=3.1.4
+  - cffi
+  - intel-openmp
+  - mkl
+
+  # Core numeric/data libs used by app and eval scripts
+  - numpy=1.21.6
+  - pandas=1.5.3
+  - matplotlib=3.7.1
+  - scipy=1.7.3
+
+  - pip:
+      # RL/Procgen compatibility line used in this codebase
+      - torch==1.13.1
+      - gym==0.21.0
+      - gym3==0.3.3
+      - gymnasium==0.29.1
+      - stable-baselines3==1.6.2
+      - procgen==0.10.7
+      - filelock==3.0.10
+      - cloudpickle==2.2.1
+      - moderngl==5.8.2
+
+      # Web app runtime (app.py)
+      - fastapi==0.104.1
+      - uvicorn[standard]==0.24.0
+      - gunicorn==21.2.0
+      - python-socketio==5.10.0
+      - python-engineio==4.12.3
+      - simple-websocket==1.1.0
+      - aiofiles==23.2.1
+      - jinja2==3.1.2
+      - python-dotenv==1.0.0
+      - sqlalchemy==2.0.23
+      - pymysql==1.1.0
+
+      # Imaging/video helpers used by dpu_clf.py and evaluate scripts
+      - pillow==9.5.0
+      - opencv-python==4.8.1.78
+      - imageio==2.31.2
+      - imageio-ffmpeg==0.3.0
+
+      # Utilities
+      - tqdm==4.66.1
+      - pyyaml==6.0.1

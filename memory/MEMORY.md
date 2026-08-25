@@ -1,0 +1,1 @@
+- [AAMAS paper](aamas-paper.md) — "Did My Feedback Help?" source lives in Overleaf; figures in-repo; AAMAS 2027 conversion + local compile gotcha

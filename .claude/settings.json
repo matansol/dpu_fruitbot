@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import fitz; print\\('pymupdf ok', fitz.__doc__[:30]\\)\")",
+      "Bash(python -c \"from PIL import Image; print\\('PIL ok'\\)\")"
+    ]
+  }
+}
